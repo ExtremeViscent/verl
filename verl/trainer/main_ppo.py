@@ -97,7 +97,8 @@ def main(config):
         ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 
                                            'NCCL_DEBUG': 'WARN',
                                            'PYTHONPATH': '/opt/Megatron-LM',
-                                           'VERL_PPO_LOGGING_LEVEL': 'DEBUG'}})
+                                           'VERL_PPO_LOGGING_LEVEL': 'DEBUG',
+                                           'CUDA_DEVICE_MAX_CONNECTIONS': '1'}})
 
     ray.get(main_task.remote(config))
 

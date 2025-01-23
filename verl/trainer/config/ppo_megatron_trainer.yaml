@@ -42,7 +42,7 @@ actor_rollout_ref:
   ref:
     megatron:
       tensor_model_parallel_size: 8
-      pipeline_model_parallel_size: 1
+      pipeline_model_parallel_size: 2
       num_layers_per_virtual_pipeline_stage: null # vpp will hang. need debug.
       sequence_parallel: True
       seed: 1
