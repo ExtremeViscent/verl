@@ -28,6 +28,7 @@ from megatron.core import ModelParallelConfig
 from torch import nn
 from transformers import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding as hfLlamaRotaryEmbedding
+from transformers.modeling_rope_utils import _compute_llama3_parameters
 from verl.models.llama.megatron.layers.parallel_linear import QKVParallelLinear
 
 from verl.utils.megatron import tensor_parallel as tp_utils
@@ -112,6 +113,22 @@ class LlamaDynamicNTKScalingRotaryEmbedding(LlamaRotaryEmbedding):
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+class Llama3RotaryEmbedding(LlamaRotaryEmbedding):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0, config = None):
+        self.scaling_factor = scaling_factor
+        self.config = config
+        super().__init__(dim, max_position_embeddings, base, device)
+    
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        inv_freq, _ = _compute_llama3_parameters(self.config, device, seq_len)
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+        freqs = torch.einsum("i,j->ij", t, inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
 
 
 def rotate_half(x):
@@ -227,12 +244,11 @@ class ParallelLlamaAttention(nn.Module):
                     base=self.rope_theta,
                 )
             elif scaling_type == "llama3":
-                self.rotary_emb = hfLlamaRotaryEmbedding(
+                self.rotary_emb = Llama3RotaryEmbedding(
                     self.head_dim,
                     max_position_embeddings=self.max_position_embeddings,
-                    base=self.rope_theta,
                     scaling_factor=scaling_factor,
-                    rope_type="llama3",
+                    base=self.rope_theta,
                     config=self.config
                 )
             else:
