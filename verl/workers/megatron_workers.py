@@ -324,21 +324,28 @@ class ActorRolloutRefWorker(MegatronWorker):
 
     @register(dispatch_mode=Dispatch.MEGATRON_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
-        assert self._is_actor
+        # with torch.profiler.profile(
+        #         record_shapes=True,
+        #         profile_memory=True,
+        #         with_stack=True
+        # ) as prof:
+        if True:
+            assert self._is_actor
 
-        data.batch = data.batch.cuda()
+            data.batch = data.batch.cuda()
 
-        log_gpu_memory_usage('Before update policy', logger=logger)
+            log_gpu_memory_usage('Before update policy', logger=logger)
 
-        dataloader = self.actor.make_minibatch_iterator(data=data)
-        metrics = self.actor.update_policy(dataloader=dataloader)
+            dataloader = self.actor.make_minibatch_iterator(data=data)
+            metrics = self.actor.update_policy(dataloader=dataloader)
 
-        log_gpu_memory_usage('After update policy', logger=logger)
+            log_gpu_memory_usage('After update policy', logger=logger)
 
-        # TODO: here, we should return all metrics
-        output = DataProto(meta_info={'metrics': metrics})
-        output = output.to('cpu')
-        torch.cuda.empty_cache()
+            # TODO: here, we should return all metrics
+            output = DataProto(meta_info={'metrics': metrics})
+            output = output.to('cpu')
+            torch.cuda.empty_cache()
+        # prof.export_chrome_trace(f'./log/update_actor_{uuid4()}.json')
         return output
 
     @register(dispatch_mode=Dispatch.MEGATRON_PP_AS_DP_PROTO)

@@ -27,6 +27,7 @@ from megatron.core import tensor_parallel
 from megatron.core import ModelParallelConfig
 from torch import nn
 from transformers import LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding as hfLlamaRotaryEmbedding
 from verl.models.llama.megatron.layers.parallel_linear import QKVParallelLinear
 
 from verl.utils.megatron import tensor_parallel as tp_utils
@@ -209,7 +210,7 @@ class ParallelLlamaAttention(nn.Module):
                 base=self.rope_theta,
             )
         else:
-            scaling_type = self.config.rope_scaling["type"]
+            scaling_type = self.config.rope_scaling["type"] if "type" in self.config.rope_scaling else self.config.rope_scaling["rope_type"]
             scaling_factor = self.config.rope_scaling["factor"]
             if scaling_type == "linear":
                 self.rotary_emb = LlamaLinearScalingRotaryEmbedding(
@@ -224,6 +225,15 @@ class ParallelLlamaAttention(nn.Module):
                     max_position_embeddings=self.max_position_embeddings,
                     scaling_factor=scaling_factor,
                     base=self.rope_theta,
+                )
+            elif scaling_type == "llama3":
+                self.rotary_emb = hfLlamaRotaryEmbedding(
+                    self.head_dim,
+                    max_position_embeddings=self.max_position_embeddings,
+                    base=self.rope_theta,
+                    scaling_factor=scaling_factor,
+                    rope_type="llama3",
+                    config=self.config
                 )
             else:
                 raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
