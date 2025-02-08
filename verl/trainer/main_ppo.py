@@ -17,21 +17,15 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 
 from verl import DataProto
 import torch
-from verl.utils.reward_score import gsm8k, math, multiply, countdown, kk
+from verl.utils.reward_score import gsm8k, math
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 
 
-def _select_rm_score_fn(data_source):
+def _default_compute_score(data_source, solution_str, ground_truth):
     if data_source == 'openai/gsm8k':
-        return gsm8k.compute_score
-    elif data_source == 'lighteval/MATH':
-        return math.compute_score
-    elif "multiply" in data_source or "arithmetic" in data_source:
-        return multiply.compute_score
-    elif "countdown" in data_source:
-        return countdown.compute_score
-    elif "kk" in data_source:
-        return kk.compute_score
+        return gsm8k.compute_score(solution_str, ground_truth)
+    elif data_source in ['lighteval/MATH', 'DigitalLearningGmbH/MATH-lighteval']:
+        return math.compute_score(solution_str, ground_truth)
     else:
         raise NotImplementedError
 
@@ -40,9 +34,10 @@ class RewardManager():
     """The reward manager.
     """
 
-    def __init__(self, tokenizer, num_examine) -> None:
+    def __init__(self, tokenizer, num_examine, compute_score=None) -> None:
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
+        self.compute_score = compute_score or _default_compute_score
 
     def __call__(self, data: DataProto):
         """We will expand this function gradually based on the available datasets"""
@@ -75,11 +70,13 @@ class RewardManager():
 
             ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
 
-            # select rm_score
             data_source = data_item.non_tensor_batch['data_source']
-            compute_score_fn = _select_rm_score_fn(data_source)
 
-            score = compute_score_fn(solution_str=sequences_str, ground_truth=ground_truth)
+            score = self.compute_score(
+                data_source=data_source,
+                solution_str=sequences_str,
+                ground_truth=ground_truth,
+            )
             reward_tensor[i, valid_response_length - 1] = score
 
             if data_source not in already_print_data_sources:
@@ -108,7 +105,6 @@ def run_ppo(config, compute_score=None):
                                            'NCCL_DEBUG': 'WARN',
                                            'PYTHONPATH': '/opt/Megatron-LM',
                                            'VERL_PPO_LOGGING_LEVEL': 'DEBUG',
-                                           'VLLM_ATTENTION_BACKEND': 'XFORMERS', 
                                            'CUDA_DEVICE_MAX_CONNECTIONS': '1'}})
 
     ray.get(main_task.remote(config, compute_score))
