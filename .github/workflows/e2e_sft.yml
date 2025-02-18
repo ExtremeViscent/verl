@@ -37,7 +37,7 @@ jobs:
       - name: Install the current repository
         run: |
           pip3 install hf_transfer
-          pip3 install -e .[test]
+          pip3 install -e .[test,gpu]
       - name: Prepare gsm8k dataset
         run: |
           ray stop --force
@@ -58,3 +58,4 @@ jobs:
         run: |
           ray stop --force
           bash tests/sft/run_sft_qwen05_sp2_liger.sh 8 $HOME/ckpts/
+          rm -rf $HOME/ckpts/
