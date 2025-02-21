@@ -454,6 +454,48 @@ class ActorRolloutRefWorker(Worker):
         torch.cuda.empty_cache()
         return output
 
+    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    def feed_group_cache(self, prompts: DataProto):
+        prompts.batch = prompts.batch.cuda()
+        meta_info = {
+            'eos_token_id':
+                self.generation_config.eos_token_id
+                if self.generation_config is not None else self.tokenizer.eos_token_id,
+            'pad_token_id':
+                self.generation_config.pad_token_id
+                if self.generation_config is not None else self.tokenizer.pad_token_id,
+        }
+        prompts.meta_info.update(meta_info)
+        prompts = self.sharding_manager.preprocess_data(prompts)
+        self.rollout.feed_group_cache(prompts=prompts)
+        return DataProto()
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def generate_sequences_ingroup(self, mini_bsz: int):
+        prompts = prompts.to('cuda')
+
+        assert self._is_rollout
+        if self._is_offload_param:
+            load_fsdp_model_to_gpu(self.actor_module_fsdp)
+
+        with self.rollout_sharding_manager:
+
+            # after parameters sync with rollout, offload actor model to CPU
+            if self._is_offload_param:
+                offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+            if self._is_offload_optimizer:
+                offload_fsdp_optimizer(optimizer=self.actor_optimizer)
+
+            log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)
+
+            prompts = self.rollout_sharding_manager.preprocess_data(prompts)
+            output = self.rollout.generate_sequences_ingroup(mini_bsz=mini_bsz)
+            log_gpu_memory_usage('After rollout generation', logger=logger)
+
+            output = self.rollout_sharding_manager.postprocess_data(output)
+
+        output = output.to('cpu')
+
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
         prompts = prompts.to('cuda')
