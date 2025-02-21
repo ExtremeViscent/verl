@@ -385,6 +385,42 @@ class ActorRolloutRefWorker(MegatronWorker):
         log_gpu_memory_usage('After recompute log prob', logger=logger)
         return output
 
+    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    def feed_group_cache(self, prompts: DataProto):
+        prompts.batch = prompts.batch.cuda()
+        meta_info = {
+            'eos_token_id':
+                self.generation_config.eos_token_id
+                if self.generation_config is not None else self.tokenizer.eos_token_id,
+            'pad_token_id':
+                self.generation_config.pad_token_id
+                if self.generation_config is not None else self.tokenizer.pad_token_id,
+        }
+        prompts.meta_info.update(meta_info)
+        prompts = self.sharding_manager.preprocess_data(prompts)
+        self.rollout.feed_group_cache(prompts=prompts)
+        return DataProto()
+
+
+    @register(dispatch_mode=Dispatch.MEGATRON_PP_AS_DP_PROTO)
+    def generate_sequences_ingroup(self, mini_bsz: int):
+        assert self._is_rollout
+
+        with self.sharding_manager:
+            log_gpu_memory_usage('After entering sharding manager', logger=logger)
+
+            output = self.rollout.generate_sequences_ingroup(mini_bsz=mini_bsz)
+
+            log_gpu_memory_usage('After rollout generation', logger=logger)
+
+            output = self.sharding_manager.postprocess_data(output)
+
+        output = output.to('cpu')
+        # clear kv cache
+        torch.cuda.empty_cache()
+        log_gpu_memory_usage('After recompute log prob', logger=logger)
+        return output
+
     @register(dispatch_mode=Dispatch.MEGATRON_COMPUTE_PROTO)
     def compute_ref_log_prob(self, data: DataProto):
         data = data.to('cuda')

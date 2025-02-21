@@ -20,7 +20,7 @@ from tensordict import TensorDict
 from verl import DataProto
 from verl.workers.rollout.base import BaseRollout
 from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length
-from sglang.srt.server.engine_fragment import EngineFragment
+from verl.third_party.sglang.entrypoint import EngineFragment
 from sglang.srt.distributed import ParallelProcessGroups
 from torch.distributed.device_mesh import init_device_mesh
 from sglang.srt.sampling.sampling_params import SamplingParams
@@ -28,6 +28,7 @@ from verl.third_party.sglang import parallel_state as sglang_ps
 import torch.distributed
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from torch import nn
@@ -149,6 +150,10 @@ class SGLangRollout(BaseRollout):
         self.tokenizer = tokenizer
         self.pad_token_id = tokenizer.pad_token_id
 
+        self.group_cache = {}
+        self.group_kwargs = {}
+        self.group_meta = {}
+
     @contextmanager
     def update_sampling_params(self, **kwargs):
         # update sampling params
@@ -164,6 +169,107 @@ class SGLangRollout(BaseRollout):
         # if len(old_sampling_params_args):
         for key, value in old_sampling_params_args.items():
             setattr(self.sampling_params, key, value)
+
+    def feed_group_cache(self, prompts: DataProto, **kwargs):
+        
+        idx = prompts.batch['input_ids']  # (bs, prompt_length)
+        # left-padded attention_mask
+        attention_mask = prompts.batch['attention_mask']
+        position_ids = prompts.batch['position_ids']
+        
+        for i in range(prompts.batch['input_ids'].size(0)):
+            idx = prompts.batch['input_ids'][i]
+            attention_mask = prompts.batch['attention_mask'][i]
+            position_ids = prompts.batch['position_ids'][i]
+            idx_ = _pre_process_inputs(self.pad_token_id, idx)
+            rid = uuid4()
+            self.group_cache[rid] = {
+                'idx': idx,
+                'processed_idx': idx_,
+                'attention_mask': attention_mask,
+                'position_ids': position_ids
+            }
+        self.group_meta = prompts.meta_info
+
+        do_sample = prompts.meta_info.get('do_sample', True)
+        if not do_sample:
+            self.group_kwargs = {
+                'best_of': 1,
+                'top_p': 1.0,
+                'top_k': -1,
+                'min_p': 0.0,
+                'temperature': 0,
+                'n': 1  # if greedy, only 1 response
+            }
+
+    def generate_sequences_ingroup(self, mini_bsz: int) -> DataProto:
+        idx_list = []
+        rids = []
+        for rid, v in self.group_cache.items():
+            idx_list.append(v['processed_idx'])
+            rids.append(rid)
+            if len(idx_list) == mini_bsz:
+                break
+        do_sample = self.group_meta.get('do_sample', True)
+        eos_token_id = self.group_meta['eos_token_id']
+
+        with self.update_sampling_params(**self.group_kwargs):
+            output, remain_rids = self.inference_engine.generate(
+                prompt=None,  # because we have already convert it to prompt token id
+                sampling_params=self.sampling_params,
+                return_logprob=True,
+                input_ids=idx_list,
+                rid=rids)
+        
+        self.group_cache = {rid: self.group_cache[rid] for rid in remain_rids}
+            
+        out = _post_process_outputs(self.tokenizer, output)
+        # print(out)
+        response = out[0].to(idx.device)
+        log_probs = out[1].to(idx.device)
+
+        if response.shape[1] < self.config.response_length:
+            response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
+            log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
+
+        if self.config.n > 1 and do_sample:
+            idx = idx.repeat_interleave(self.config.n, dim=0)
+            attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
+            position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
+            batch_size = batch_size * self.config.n
+        seq = torch.cat([idx, response], dim=-1)
+
+        response_length = response.size(1)
+        delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
+        delta_position_id = delta_position_id.unsqueeze(0).repeat(batch_size, 1)
+
+        # TODO(sgm): fix position_ids on right_pad
+        # prompt: left pad + response: right pad
+        # attention_mask: [0,0,0,0,1,1,1,1, | 1,1,1,0,0,0,0,0]
+        # position_ids:   [0,0,0,0,0,1,2,3, | 4,5,6,7,8,9,10,11]
+        response_position_ids = position_ids[:, -1:] + delta_position_id
+        position_ids = torch.cat([position_ids, response_position_ids], dim=-1)
+        response_attention_mask = get_eos_mask(response_id=response, eos_token=eos_token_id, dtype=attention_mask.dtype)
+        attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
+
+        # all the tp ranks should contain the same data here. data in all ranks are valid
+        batch = TensorDict(
+            {
+                'prompts': idx,
+                'responses': response,
+                'input_ids': seq,  # here input_ids become the whole sentences
+                # 'old_log_probs': log_probs, # we will recompute old log prob with actor
+                'attention_mask': attention_mask,
+                'position_ids': position_ids
+            },
+            batch_size=batch_size)
+
+        # free vllm cache engine
+        if self.config.free_cache_engine:
+            self.inference_engine._entrypoint._scheduler.flush_cache()
+
+        return DataProto(batch=batch)
+
 
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
