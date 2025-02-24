@@ -209,6 +209,7 @@ class SGLangRollout(BaseRollout):
         mini_bsz = mini_bsz.meta_info.get('mini_bsz', 32)
         idx_list = []
         rids = []
+        idx = []
         for rid, v in self.group_cache.items():
             idx_list.append(v['processed_idx'])
             rids.append(rid)
@@ -218,12 +219,20 @@ class SGLangRollout(BaseRollout):
         eos_token_id = self.group_meta['eos_token_id']
 
         with self.update_sampling_params(**self.group_kwargs):
-            output, remain_rids = self.inference_engine.generate(
+            output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
                 return_logprob=True,
                 input_ids=idx_list,
-                rid=rids)
+                rid=rids,
+                num_return_sequences=mini_bsz
+            )
+            print(f"completed_rids: {len(completed_rids)}, remain_rids: {len(remain_rids)}")
+
+        for rid in completed_rids:
+            idx.append(self.group_cache[rid]['idx'])
+        device_ = idx[0].device
+        idx = torch.stack(idx, dim=0).to(device_)
         
         self.group_cache = {rid: self.group_cache[rid] for rid in remain_rids}
             

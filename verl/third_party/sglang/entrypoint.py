@@ -41,16 +41,18 @@ class Entrypoint(SpmdEntrypoint):
 
         finished_outputs = outputs
         pending_rids = []
+        completed_rids = []
         while self._scheduler.process_batch():
             if num_return_sequences is not None:
                 ret_count = 0
                 finished_outputs = []
                 pending_rids = [r.rid for r in objs]
                 for output in outputs:
-                    if output.get("meta_info", {}).get("finish_reason", None) is not None:
+                    if output is not None and output.get("meta_info", {}).get("finish_reason", None) is not None:
                         ret_count += 1
                         pending_rids.remove(output["id"])
                         finished_outputs.append(output)
+                        completed_rids.append(output["id"])
                 if ret_count >= num_return_sequences:
                     for rid in pending_rids:
                         self._scheduler.abort_request(AbortReq(rid=rid))
@@ -58,7 +60,7 @@ class Entrypoint(SpmdEntrypoint):
             else:
                 pass
 
-        return finished_outputs, pending_rids
+        return finished_outputs, completed_rids, pending_rids
 
 class EngineFragment(EngineBase):
     def __init__(
