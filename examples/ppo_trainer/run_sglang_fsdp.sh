@@ -3,7 +3,9 @@ DATA_DIR=$HOME/data/gsm8k
 TP_SIZE=8
 PP_SIZE=2
 
-python3 -m verl.trainer.main_ppo \
+ray job submit --address="http://localhost:8265" \
+  --runtime-env-json='{"working_dir": "./"}' \
+  -- python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=sglang \
     data.train_files=$DATA_DIR/train.parquet \
     data.val_files=$DATA_DIR/test.parquet \

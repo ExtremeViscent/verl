@@ -870,7 +870,9 @@ class RayPPOTrainer(object):
                     with _timer('step', timing_raw):
                         # generate a batch
                         with _timer('gen', timing_raw):
-                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(mini_bsz)
+                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(
+                                DataProto(meta_info={'mini_bsz', mini_bsz})
+                            )
 
                         if self.config.algorithm.adv_estimator == 'remax':
                             with _timer('gen_max', timing_raw):

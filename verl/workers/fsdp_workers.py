@@ -466,13 +466,12 @@ class ActorRolloutRefWorker(Worker):
                 if self.generation_config is not None else self.tokenizer.pad_token_id,
         }
         prompts.meta_info.update(meta_info)
-        prompts = self.sharding_manager.preprocess_data(prompts)
+        prompts = self.rollout_sharding_manager.preprocess_data(prompts)
         self.rollout.feed_group_cache(prompts=prompts)
         return DataProto()
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
-    def generate_sequences_ingroup(self, mini_bsz: int):
-        prompts = prompts.to('cuda')
+    def generate_sequences_ingroup(self, mini_bsz: DataProto):
 
         assert self._is_rollout
         if self._is_offload_param:
@@ -488,7 +487,6 @@ class ActorRolloutRefWorker(Worker):
 
             log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)
 
-            prompts = self.rollout_sharding_manager.preprocess_data(prompts)
             output = self.rollout.generate_sequences_ingroup(mini_bsz=mini_bsz)
             log_gpu_memory_usage('After rollout generation', logger=logger)
 

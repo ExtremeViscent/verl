@@ -121,9 +121,12 @@ class SGLangRollout(BaseRollout):
             tp_rank=tp_rank,
             gpu_id=local_rank,
             nccl_port=23456,
+            enable_mixed_chunk=True,
             skip_tokenizer_init=False,
             mem_fraction_static=config.gpu_memory_utilization,
             dtype=config.dtype,
+            max_running_requests=128,
+            cuda_graph_max_bs=128,
             parallel_process_groups=ParallelProcessGroups.from_devices_meshes(
                 device_mesh_device=device_mesh_device,
                 device_mesh_cpu=device_mesh_cpu,
@@ -202,7 +205,8 @@ class SGLangRollout(BaseRollout):
                 'n': 1  # if greedy, only 1 response
             }
 
-    def generate_sequences_ingroup(self, mini_bsz: int) -> DataProto:
+    def generate_sequences_ingroup(self, mini_bsz: DataProto) -> DataProto:
+        mini_bsz = mini_bsz.meta_info.get('mini_bsz', 32)
         idx_list = []
         rids = []
         for rid, v in self.group_cache.items():
