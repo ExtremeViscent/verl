@@ -198,7 +198,7 @@ class SGLangRollout(BaseRollout):
                 'gid': gid
             }
         self.group_meta = prompts.meta_info
-        self.mini_bsz = self.group_meta.get('mini_bsz', bsz)
+        self.mini_bsz = bsz // prompts.meta_info['n_groups']
 
         do_sample = prompts.meta_info.get('do_sample', True)
         if not do_sample:

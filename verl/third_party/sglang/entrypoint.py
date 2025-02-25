@@ -41,9 +41,9 @@ class Entrypoint(SpmdEntrypoint):
 
         finished_outputs = outputs
         pending_rids = []
-        completed_rids = []
+        completed_rids = [r.rid for r in objs]
         while self._scheduler.process_batch():
-            if num_return_sequences is not None:
+            if num_return_sequences is not None and num_return_sequences != obj.batch_size:
                 ret_count = 0
                 finished_outputs = []
                 completed_rids = []
@@ -59,9 +59,7 @@ class Entrypoint(SpmdEntrypoint):
                         for output in outputs:
                             if output is not None and output["meta_info"]["id"] in completed_rids:
                                 finished_outputs.append(output)
-                        while self._scheduler.process_batch():
-                            pass
-                        return finished_outputs, completed_rids, pending_rids
+                        num_return_sequences = None
             else:
                 pass
 

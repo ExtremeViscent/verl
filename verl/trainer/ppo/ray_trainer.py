@@ -866,7 +866,7 @@ class RayPPOTrainer(object):
                 gids = torch.arange(macro_batch.batch['input_ids'].size(0))
                 macro_batch.batch['gids'] = gids
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
-                macro_gen_batch.meta_info['mini_bsz'] = macro_gen_batch.batch['input_ids'].size(0) // n_groups
+                macro_gen_batch.meta_info['n_groups'] = n_groups
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
                 for k in range(n_groups):
                     metrics = {}
