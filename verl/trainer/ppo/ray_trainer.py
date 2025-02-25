@@ -476,6 +476,9 @@ class RayPPOTrainer(object):
     def _create_dataloader(self):
         from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
         # TODO: we have to make sure the batch size is divisible by the dp size
+        macro_batch_size = self.config.data.train_batch_size
+        if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+            macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_groups
         self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
                                          tokenizer=self.tokenizer,
                                          prompt_key=self.config.data.prompt_key,
@@ -492,7 +495,7 @@ class RayPPOTrainer(object):
             sampler = SequentialSampler(data_source=self.train_dataset)
 
         self.train_dataloader = DataLoader(dataset=self.train_dataset,
-                                           batch_size=self.config.data.train_batch_size*4,
+                                           batch_size=macro_batch_size,
                                            drop_last=True,
                                            collate_fn=collate_fn,
                                            sampler=sampler)
@@ -859,7 +862,11 @@ class RayPPOTrainer(object):
                 macro_batch.batch['gids'] = gids
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                for k in range(4):
+                n_groups = getattr(self.config.actor_rollout_ref.rollout, 'n_groups', 1)
+                if not self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
+                    n_groups = 1
+                    print('n_groups is set to 1 without group shuffle')
+                for k in n_groups:
                     metrics = {}
                     timing_raw = {}
 
