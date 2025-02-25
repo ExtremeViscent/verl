@@ -60,6 +60,7 @@ class Entrypoint(SpmdEntrypoint):
                             if output is not None and output["meta_info"]["id"] in completed_rids:
                                 finished_outputs.append(output)
                         num_return_sequences = None
+                        break
             else:
                 pass
 

@@ -159,7 +159,8 @@ class MegatronSGLangShardingManager(BaseShardingManager):
                                               num_hidden_layers=self.model_config.num_hidden_layers,
                                               layer_name='layers')
         self.origin_params = self._post_process_params(self.params)
-        self.inference_engine.sync_model_weights(self.params, load_format='megatron')
+        # self.inference_engine.sync_model_weights(self.params, load_format='megatron')
+        self.inference_engine.update_weights_from_tensor([(k, v) for k, v in self.params.items()], load_format='direct')
 
     def __exit__(self, exc_type, exc_value, traceback):
         # offload parameters doesn't belong to this pp rank
@@ -172,7 +173,7 @@ class MegatronSGLangShardingManager(BaseShardingManager):
                 self.params[name] = self.origin_params[name]
 
         # self.inference_engine.sync_model_weights(params)
-        self.inference_engine.offload_model_weights()
+        self.inference_engine.release_gpu_occupation
 
         self.module.train()
 
