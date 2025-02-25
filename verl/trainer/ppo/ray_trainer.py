@@ -878,6 +878,7 @@ class RayPPOTrainer(object):
                         for i in range(gen_batch_output.batch['input_ids'].size(0)):
                             gid = gen_batch_output.batch['gids'][i]
                             batch.append(macro_batch[gid])
+                        print(f'batch size: {len(batch)}')
                         batch = batch_collate_fn(batch)
 
                         if self.config.algorithm.adv_estimator == 'remax':
