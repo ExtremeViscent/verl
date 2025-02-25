@@ -864,22 +864,22 @@ class RayPPOTrainer(object):
                     # batch: DataProto = DataProto.from_single_dict(batch_dict)
 
                     # pop those keys for generation
-                    gen_batch = batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
-                    mini_bsz = gen_batch.batch['input_ids'].size(0)
+                    # gen_batch = batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
+                    # mini_bsz = gen_batch.batch['input_ids'].size(0)
 
                     with _timer('step', timing_raw):
                         # generate a batch
                         with _timer('gen', timing_raw):
                             gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(
-                                DataProto(meta_info={'mini_bsz': mini_bsz})
-                            )
+                                DataProto(meta_info={'mini_bsz': self.config.data.train_batch_size//2}))
                         batch = []
-                        for i in range(gen_batch_output.batch.batch_size):
+                        for i in range(gen_batch_output.batch['input_ids'].size(0)):
                             gid = gen_batch_output.batch['gids'][i]
                             batch.append(gen_batch_output[gid])
                         batch = DataProto.concat(batch)
 
                         if self.config.algorithm.adv_estimator == 'remax':
+                            raise NotImplementedError('remax is not implemented yet')
                             with _timer('gen_max', timing_raw):
                                 gen_baseline_batch = deepcopy(gen_batch)
                                 gen_baseline_batch.meta_info['do_sample'] = False

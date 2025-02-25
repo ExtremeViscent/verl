@@ -209,7 +209,7 @@ class SGLangRollout(BaseRollout):
             }
 
     def generate_sequences_ingroup(self, mini_bsz: DataProto) -> DataProto:
-        mini_bsz = mini_bsz.meta_info.get('mini_bsz', 32)
+        batch_size = mini_bsz.meta_info.get('mini_bsz', 32)
         idx_list = []
         rids = []
         idx = []
@@ -229,7 +229,7 @@ class SGLangRollout(BaseRollout):
                 return_logprob=True,
                 input_ids=idx_list,
                 rid=rids,
-                num_return_sequences=mini_bsz
+                num_return_sequences=batch_size
             )
             print(f"completed_rids: {len(completed_rids)}, remain_rids: {len(remain_rids)}")
 
@@ -240,6 +240,9 @@ class SGLangRollout(BaseRollout):
             gids.append(self.group_cache[rid]['gid'])
         device_ = idx[0].device
         idx = torch.stack(idx, dim=0).to(device_)
+        attention_mask = torch.stack(attention_mask, dim=0)
+        position_ids = torch.stack(position_ids, dim=0)
+        gids = torch.stack(gids, dim=0).cpu()
         
         self.group_cache = {rid: self.group_cache[rid] for rid in remain_rids}
             
