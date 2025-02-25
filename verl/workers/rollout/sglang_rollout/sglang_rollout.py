@@ -179,6 +179,7 @@ class SGLangRollout(BaseRollout):
         # left-padded attention_mask
         attention_mask = prompts.batch['attention_mask']
         position_ids = prompts.batch['position_ids']
+        gids = prompts.batch['gids']
         
         for i in range(prompts.batch['input_ids'].size(0)):
             idx = prompts.batch['input_ids'][i]
@@ -186,11 +187,13 @@ class SGLangRollout(BaseRollout):
             position_ids = prompts.batch['position_ids'][i]
             idx_ = _pre_process_inputs(self.pad_token_id, idx)
             rid = uuid4()
+            gid = gids[i]
             self.group_cache[rid] = {
                 'idx': idx,
                 'processed_idx': idx_,
                 'attention_mask': attention_mask,
-                'position_ids': position_ids
+                'position_ids': position_ids,
+                'gid': gid
             }
         self.group_meta = prompts.meta_info
 
@@ -210,11 +213,12 @@ class SGLangRollout(BaseRollout):
         idx_list = []
         rids = []
         idx = []
+        attention_mask = []
+        position_ids = []
+        gids = []
         for rid, v in self.group_cache.items():
             idx_list.append(v['processed_idx'])
             rids.append(rid)
-            if len(idx_list) == mini_bsz:
-                break
         do_sample = self.group_meta.get('do_sample', True)
         eos_token_id = self.group_meta['eos_token_id']
 
@@ -231,6 +235,9 @@ class SGLangRollout(BaseRollout):
 
         for rid in completed_rids:
             idx.append(self.group_cache[rid]['idx'])
+            attention_mask.append(self.group_cache[rid]['attention_mask'])
+            position_ids.append(self.group_cache[rid]['position_ids'])
+            gids.append(self.group_cache[rid]['gid'])
         device_ = idx[0].device
         idx = torch.stack(idx, dim=0).to(device_)
         
@@ -273,7 +280,8 @@ class SGLangRollout(BaseRollout):
                 'input_ids': seq,  # here input_ids become the whole sentences
                 # 'old_log_probs': log_probs, # we will recompute old log prob with actor
                 'attention_mask': attention_mask,
-                'position_ids': position_ids
+                'position_ids': position_ids,
+                'gids': gids
             },
             batch_size=batch_size)
 

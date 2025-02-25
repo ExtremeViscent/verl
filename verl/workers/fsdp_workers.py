@@ -454,7 +454,7 @@ class ActorRolloutRefWorker(Worker):
         torch.cuda.empty_cache()
         return output
 
-    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def feed_group_cache(self, prompts: DataProto):
         prompts.batch = prompts.batch.cuda()
         meta_info = {
@@ -493,6 +493,11 @@ class ActorRolloutRefWorker(Worker):
             output = self.rollout_sharding_manager.postprocess_data(output)
 
         output = output.to('cpu')
+
+        # clear kv cache
+        torch.cuda.empty_cache()
+        log_gpu_memory_usage('After recompute log prob', logger=logger)
+        return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):

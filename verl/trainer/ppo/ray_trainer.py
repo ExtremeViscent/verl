@@ -853,15 +853,15 @@ class RayPPOTrainer(object):
         for epoch in range(self.config.trainer.total_epochs):
             for macro_batch_dict in self.train_dataloader:
                 macro_batch: DataProto = DataProto.from_single_dict(macro_batch_dict)
-                macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
+                gids = torch.arange(macro_batch.batch['input_ids'].size(0))
+                macro_batch.batch['gids'] = gids
+                macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                mini_batch_dict = split_batch(macro_batch_dict, 4)
                 for k in range(4):
-                    batch_dict = mini_batch_dict[k]
                     metrics = {}
                     timing_raw = {}
 
-                    batch: DataProto = DataProto.from_single_dict(batch_dict)
+                    # batch: DataProto = DataProto.from_single_dict(batch_dict)
 
                     # pop those keys for generation
                     gen_batch = batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
@@ -873,6 +873,11 @@ class RayPPOTrainer(object):
                             gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(
                                 DataProto(meta_info={'mini_bsz': mini_bsz})
                             )
+                        batch = []
+                        for i in range(gen_batch_output.batch.batch_size):
+                            gid = gen_batch_output.batch['gids'][i]
+                            batch.append(gen_batch_output[gid])
+                        batch = DataProto.concat(batch)
 
                         if self.config.algorithm.adv_estimator == 'remax':
                             with _timer('gen_max', timing_raw):

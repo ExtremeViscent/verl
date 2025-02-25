@@ -51,12 +51,14 @@ class Entrypoint(SpmdEntrypoint):
                     if output is not None and output.get("meta_info", {}).get("finish_reason", None) is not None:
                         ret_count += 1
                         pending_rids.remove(output["id"])
-                        finished_outputs.append(output)
                         completed_rids.append(output["id"])
-                if ret_count >= num_return_sequences:
-                    for rid in pending_rids:
-                        self._scheduler.abort_request(AbortReq(rid=rid))
-                    break
+                    if ret_count >= num_return_sequences:
+                        for rid in pending_rids:
+                            self._scheduler.abort_request(AbortReq(rid=rid))
+                        for output in outputs:
+                            if output is not None:
+                                finished_outputs.append(output)
+                        break
             else:
                 pass
 
