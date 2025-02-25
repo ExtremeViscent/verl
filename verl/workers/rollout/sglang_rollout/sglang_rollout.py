@@ -156,6 +156,7 @@ class SGLangRollout(BaseRollout):
         self.group_cache = {}
         self.group_kwargs = {}
         self.group_meta = {}
+        self.mini_bsz = None
 
     @contextmanager
     def update_sampling_params(self, **kwargs):
@@ -180,8 +181,10 @@ class SGLangRollout(BaseRollout):
         attention_mask = prompts.batch['attention_mask']
         position_ids = prompts.batch['position_ids']
         gids = prompts.batch['gids']
+        bsz = prompts.batch['input_ids'].size(0)
+        self.mini_bsz = bsz // 4
         
-        for i in range(prompts.batch['input_ids'].size(0)):
+        for i in range(bsz):
             idx = prompts.batch['input_ids'][i]
             attention_mask = prompts.batch['attention_mask'][i]
             position_ids = prompts.batch['position_ids'][i]
@@ -208,21 +211,26 @@ class SGLangRollout(BaseRollout):
                 'n': 1  # if greedy, only 1 response
             }
 
-    def generate_sequences_ingroup(self, mini_bsz: DataProto) -> DataProto:
-        batch_size = mini_bsz.meta_info.get('mini_bsz', 32)
+    def generate_sequences_ingroup(self) -> DataProto:
+        batch_size = self.mini_bsz
         idx_list = []
         rids = []
         idx = []
         attention_mask = []
         position_ids = []
         gids = []
+        new_group_cache = {}
         for rid, v in self.group_cache.items():
             idx_list.append(v['processed_idx'])
+            rid = uuid4()
+            new_group_cache[rid] = v
             rids.append(rid)
+        self.group_cache = new_group_cache
         do_sample = self.group_meta.get('do_sample', True)
         eos_token_id = self.group_meta['eos_token_id']
 
         with self.update_sampling_params(**self.group_kwargs):
+            print(f"idx_list: {len(idx_list)}")
             output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
@@ -238,6 +246,7 @@ class SGLangRollout(BaseRollout):
             attention_mask.append(self.group_cache[rid]['attention_mask'])
             position_ids.append(self.group_cache[rid]['position_ids'])
             gids.append(self.group_cache[rid]['gid'])
+            self.group_cache.pop(rid)
         device_ = idx[0].device
         idx = torch.stack(idx, dim=0).to(device_)
         attention_mask = torch.stack(attention_mask, dim=0)

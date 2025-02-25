@@ -59,7 +59,9 @@ class Entrypoint(SpmdEntrypoint):
                         for output in outputs:
                             if output is not None and output["meta_info"]["id"] in completed_rids:
                                 finished_outputs.append(output)
-                        break
+                        while self._scheduler.process_batch():
+                            pass
+                        return finished_outputs, completed_rids, pending_rids
             else:
                 pass
 

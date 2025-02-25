@@ -872,8 +872,7 @@ class RayPPOTrainer(object):
                     with _timer('step', timing_raw):
                         # generate a batch
                         with _timer('gen', timing_raw):
-                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(
-                                DataProto(meta_info={'mini_bsz': self.config.data.train_batch_size//2}))
+                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
                         batch = []
                         for i in range(gen_batch_output.batch['input_ids'].size(0)):
                             gid = gen_batch_output.batch['gids'][i]

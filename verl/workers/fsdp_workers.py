@@ -471,7 +471,7 @@ class ActorRolloutRefWorker(Worker):
         return DataProto()
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
-    def generate_sequences_ingroup(self, mini_bsz: DataProto):
+    def generate_sequences_ingroup(self):
 
         assert self._is_rollout
         if self._is_offload_param:
@@ -487,7 +487,7 @@ class ActorRolloutRefWorker(Worker):
 
             log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)
 
-            output = self.rollout.generate_sequences_ingroup(mini_bsz=mini_bsz)
+            output = self.rollout.generate_sequences_ingroup()
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
             output = self.rollout_sharding_manager.postprocess_data(output)
