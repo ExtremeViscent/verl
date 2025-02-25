@@ -866,7 +866,7 @@ class RayPPOTrainer(object):
                 if not self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
                     n_groups = 1
                     print('n_groups is set to 1 without group shuffle')
-                for k in n_groups:
+                for k in range(n_groups):
                     metrics = {}
                     timing_raw = {}
 
