@@ -33,6 +33,7 @@ from verl import DataProto
 from verl.utils.torch_functional import (broadcast_dict_tensor, allgather_dict_tensors)
 import verl.utils.megatron.tensor_parallel as tp_utils
 from verl.utils.model import normalize_pp_vpp_params
+from verl.third_party.sglang import parallel_state as sglang_ps
 # Micro Data parallel group. Micro data parallel group is additional dp group that origins from splitting training tp
 # into infer_tp and micro_tp. By default, we use order micro_dp - tp
 _MICRO_DATA_PARALLEL_GROUP = None
@@ -51,7 +52,7 @@ class MegatronSGLangShardingManager(BaseShardingManager):
         world_size = torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
         train_tensor_parallel_size = mpu.get_tensor_model_parallel_world_size()
-        infer_tensor_parallel_size = vllm_ps.get_tensor_model_parallel_world_size()
+        infer_tensor_parallel_size = sglang_ps.get_tensor_model_parallel_world_size()
 
         # TODO(sgm): this may not be true for FSDP -> vLLM
         assert infer_tensor_parallel_size <= train_tensor_parallel_size, \

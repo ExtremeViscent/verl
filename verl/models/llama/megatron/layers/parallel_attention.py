@@ -28,6 +28,7 @@ from megatron.core import ModelParallelConfig
 from torch import nn
 from transformers import LlamaConfig
 from verl.models.llama.megatron.layers.parallel_linear import QKVParallelLinear
+from transformers.modeling_rope_utils import _compute_llama3_parameters
 
 from verl.utils.megatron import tensor_parallel as tp_utils
 

@@ -222,7 +222,12 @@ class ActorRolloutRefWorker(MegatronWorker):
         return actor_module, hybrid_engine, actor_optimizer, actor_model_config, optim_config
 
     def _build_rollout(self):
+        from torch.distributed.device_mesh import init_device_mesh
         rollout_name = self.config.rollout.name
+        infer_tp = self.config.rollout.tensor_model_parallel_size
+        dp = self.world_size // infer_tp
+        assert self.world_size % infer_tp == 0, f'rollout world_size: {self.world_size} is not divisible by infer_tp: {infer_tp}'
+        rollout_device_mesh = init_device_mesh('cuda', mesh_shape=(dp, infer_tp), mesh_dim_names=['dp', 'infer_tp'])
         if rollout_name in ('vllm', 'sglang'):
             from verl.utils.model import normalize_pp_vpp_params
             if rollout_name == 'vllm':
@@ -252,13 +257,20 @@ class ActorRolloutRefWorker(MegatronWorker):
             params = normalize_pp_vpp_params(params=params,
                                              num_hidden_layers=self.actor_model_config.num_hidden_layers,
                                              layer_name='layers')
-            assert vllm_mode == 'customized', "Support for vllm>=0.7 for Megatron-LM backend has not been implemented yet."
-            rollout = vLLMRollout(actor_module=params,
-                                  config=self.config.rollout,
-                                  tokenizer=self.tokenizer,
-                                  model_hf_config=self.actor_model_config,
-                                  train_tp=mpu.get_tensor_model_parallel_world_size())
-            log_gpu_memory_usage('After building vllm rollout', logger=logger)
+            # assert vllm_mode == 'customized', "Support for vllm>=0.7 for Megatron-LM backend has not been implemented yet."
+            # rollout = Rollout(actor_module=params,
+            #                       config=self.config.rollout,
+            #                       tokenizer=self.tokenizer,
+            #                       model_hf_config=self.actor_model_config,
+            #                       train_tp=mpu.get_tensor_model_parallel_world_size())
+            # log_gpu_memory_usage('After building vllm rollout', logger=logger)
+            assert rollout_name == 'sglang', "Only sglang rollout is supported with Megatron now"
+            log_gpu_memory_usage(f'Before building {rollout_name} rollout', logger=None)
+            rollout = Rollout(actor_module=self.config.model.path,
+                                    config=self.config.rollout,
+                                    tokenizer=self.tokenizer,
+                                    model_hf_config=self.actor_model_config)
+            log_gpu_memory_usage(f'After building {rollout_name} rollout', logger=None)
 
             # perform weight resharding between actor and rollout
             sharding_manager = MegatronShardingManager(module=self.hybrid_engine,
