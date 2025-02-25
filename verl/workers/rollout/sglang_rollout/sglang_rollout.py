@@ -182,7 +182,6 @@ class SGLangRollout(BaseRollout):
         position_ids = prompts.batch['position_ids']
         gids = prompts.batch['gids']
         bsz = prompts.batch['input_ids'].size(0)
-        self.mini_bsz = bsz // 4
         
         for i in range(bsz):
             idx = prompts.batch['input_ids'][i]
@@ -199,6 +198,7 @@ class SGLangRollout(BaseRollout):
                 'gid': gid
             }
         self.group_meta = prompts.meta_info
+        self.mini_bsz = self.group_meta.get('mini_bsz', bsz)
 
         do_sample = prompts.meta_info.get('do_sample', True)
         if not do_sample:

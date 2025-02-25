@@ -855,17 +855,19 @@ class RayPPOTrainer(object):
         # we start from step 1
         self.global_steps += 1
 
+        n_groups = getattr(self.config.actor_rollout_ref.rollout, 'n_groups', 1)
+        if not self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
+            n_groups = 1
+            print('n_groups is set to 1 without group shuffle')
+
         for epoch in range(self.config.trainer.total_epochs):
             for macro_batch_dict in self.train_dataloader:
                 macro_batch: DataProto = DataProto.from_single_dict(macro_batch_dict)
                 gids = torch.arange(macro_batch.batch['input_ids'].size(0))
                 macro_batch.batch['gids'] = gids
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
+                macro_gen_batch.meta_info['mini_bsz'] = macro_gen_batch.batch['input_ids'].size(0) // n_groups
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                n_groups = getattr(self.config.actor_rollout_ref.rollout, 'n_groups', 1)
-                if not self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
-                    n_groups = 1
-                    print('n_groups is set to 1 without group shuffle')
                 for k in range(n_groups):
                     metrics = {}
                     timing_raw = {}
