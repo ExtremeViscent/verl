@@ -30,6 +30,7 @@ from codetiming import Timer
 from omegaconf import OmegaConf, open_dict
 from verl import DataProto
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
+from verl.protocol import collate_fn as batch_collate_fn
 from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayResourcePool, RayWorkerGroup, RayClassWithInitArgs
 from verl.single_controller.ray.base import create_colocated_worker_cls
@@ -37,6 +38,7 @@ from verl.trainer.ppo import core_algos
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
 from verl.utils.dataset.rl_dataset import RLHFDataset, collate_fn
+
 
 WorkerType = Type[Worker]
 
@@ -875,8 +877,8 @@ class RayPPOTrainer(object):
                         batch = []
                         for i in range(gen_batch_output.batch['input_ids'].size(0)):
                             gid = gen_batch_output.batch['gids'][i]
-                            batch.append(gen_batch_output[gid])
-                        batch = DataProto.concat(batch)
+                            batch.append(macro_batch[gid])
+                        batch = batch_collate_fn(batch)
 
                         if self.config.algorithm.adv_estimator == 'remax':
                             raise NotImplementedError('remax is not implemented yet')
