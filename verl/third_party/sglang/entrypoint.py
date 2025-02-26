@@ -59,12 +59,16 @@ class Entrypoint(SpmdEntrypoint):
                         for output in outputs:
                             if output is not None and output["meta_info"]["id"] in completed_rids:
                                 finished_outputs.append(output)
-                        num_return_sequences = None
-                        break
+                        while self._scheduler.process_batch():
+                            pass
+                        return finished_outputs, completed_rids, pending_rids
             else:
                 pass
 
-        return finished_outputs, completed_rids, pending_rids
+        if num_return_sequences is not None:
+            return finished_outputs, completed_rids, pending_rids
+        else:
+            return outputs
 
 class EngineFragment(EngineBase):
     def __init__(
