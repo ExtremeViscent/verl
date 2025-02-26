@@ -158,6 +158,10 @@ class MegatronSGLangShardingManager(BaseShardingManager):
         self.params = normalize_pp_vpp_params(params=params,
                                               num_hidden_layers=self.model_config.num_hidden_layers,
                                               layer_name='layers')
+        # Llama-3.2 ties embeddings
+        if getattr(self.model_config, 'tie_word_embeddings', True):
+            self.params.pop('lm_head.weight')
+
         self.origin_params = self._post_process_params(self.params)
         # self.inference_engine.sync_model_weights(self.params, load_format='megatron')
         self.inference_engine.update_weights_from_tensor([(k, v) for k, v in self.params.items()], load_format='direct')
