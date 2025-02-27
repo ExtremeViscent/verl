@@ -175,6 +175,14 @@ class SGLangRollout(BaseRollout):
         for key, value in old_sampling_params_args.items():
             setattr(self.sampling_params, key, value)
 
+    def get_temp_sampling_params(self, **kwargs):
+        sampling_params = self.sampling_params.copy()
+        if kwargs:
+            for key, value in kwargs.items():
+                if hasattr(SamplingParams(), str(key)):
+                    sampling_params[key] = value
+        return sampling_params
+
     def feed_group_cache(self, prompts: DataProto, **kwargs):
         
         idx = prompts.batch['input_ids']  # (bs, prompt_length)
@@ -331,6 +339,7 @@ class SGLangRollout(BaseRollout):
             idx_list.append(_pre_process_inputs(self.pad_token_id, idx[i]))
 
         do_sample = prompts.meta_info.get('do_sample', True)
+        print(f"meta_info: {prompts.meta_info}")
         if not do_sample:
             kwargs = {
                 'best_of': 1,
@@ -341,10 +350,14 @@ class SGLangRollout(BaseRollout):
                 'n': 1  # if greedy, only 1 response
             }
         # users can customize different sampling_params at different run
-        with self.update_sampling_params(**kwargs):
+        # with self.update_sampling_params(**kwargs):
+        if True:
+            print(f"sample params: {self.sampling_params}")
+            print(f"kwargs: {kwargs}")
+            sampling_params = self.get_temp_sampling_params(**kwargs)
             output = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
-                sampling_params=self.sampling_params,
+                sampling_params=sampling_params,
                 return_logprob=True,
                 input_ids=idx_list)
 

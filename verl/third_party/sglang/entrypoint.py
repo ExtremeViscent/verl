@@ -34,6 +34,7 @@ class Entrypoint(SpmdEntrypoint):
             objs = [obj] if obj.is_single else [obj[i] for i in range(obj.batch_size)]
         tokenized_requests = self._generation_converter.tokenize_requests(objs)
         rid_to_req_index = {r.rid: i for i, r in enumerate(tokenized_requests)}
+        print(f"batch_size: {obj.batch_size}, parallel_sample_num: {obj.parallel_sample_num}, num_return_sequences: {num_return_sequences}, num_return_groups: {num_return_groups}")
 
         outputs: List[Dict[str, Any]] = [None] * obj.batch_size * obj.parallel_sample_num
 
@@ -106,7 +107,7 @@ class Entrypoint(SpmdEntrypoint):
             else:
                 pass
 
-        if num_return_sequences is not None:
+        if num_return_sequences is not None or num_return_groups is not None:
             return finished_outputs, completed_rids, pending_rids
         else:
             return outputs

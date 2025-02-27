@@ -3,7 +3,7 @@ DATA_DIR=$HOME/data/gsm8k
 TP_SIZE=8
 PP_SIZE=4
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=True
+GROUP_SHUFFLE=False
 
 ray job submit --address="http://localhost:8265" \
   --runtime-env-json='{"working_dir": "./"}' \
