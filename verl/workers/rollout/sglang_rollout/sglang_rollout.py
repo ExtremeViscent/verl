@@ -156,6 +156,7 @@ class SGLangRollout(BaseRollout):
         self.group_cache = {}
         self.group_kwargs = {}
         self.group_meta = {}
+        self.rid_to_gid = {}
         self.mini_bsz = None
 
     @contextmanager
@@ -210,6 +211,8 @@ class SGLangRollout(BaseRollout):
                 'temperature': 0,
                 'n': 1  # if greedy, only 1 response
             }
+        else:
+            self.group_kwargs = {}
 
     def generate_sequences_ingroup(self) -> DataProto:
         batch_size = self.mini_bsz
@@ -231,13 +234,16 @@ class SGLangRollout(BaseRollout):
 
         with self.update_sampling_params(**self.group_kwargs):
             print(f"idx_list: {len(idx_list)}")
+            print(self.sampling_params)
+            gen_kwargs = {'num_return_sequences': batch_size} if self.sampling_params.get('n', 1) == 1 \
+                else {'num_return_groups': batch_size}
             output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
                 return_logprob=True,
                 input_ids=idx_list,
                 rid=rids,
-                num_return_sequences=batch_size
+                **gen_kwargs
             )
             print(f"completed_rids: {len(completed_rids)}, remain_rids: {len(remain_rids)}")
 
@@ -269,6 +275,7 @@ class SGLangRollout(BaseRollout):
             attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
             position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
             batch_size = batch_size * self.config.n
+            gids = gids.repeat_interleave(self.config.n, dim=0)
         seq = torch.cat([idx, response], dim=-1)
 
         response_length = response.size(1)
@@ -285,6 +292,7 @@ class SGLangRollout(BaseRollout):
         attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
 
         # all the tp ranks should contain the same data here. data in all ranks are valid
+        print(f"response: {response_length}")
         batch = TensorDict(
             {
                 'prompts': idx,

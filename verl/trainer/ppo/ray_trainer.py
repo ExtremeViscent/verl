@@ -883,7 +883,8 @@ class RayPPOTrainer(object):
                         with _timer('gen', timing_raw):
                             gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
                         batch = []
-                        for i in range(gen_batch_output.batch['input_ids'].size(0)):
+                        stride = self.config.actor_rollout_ref.rollout.n
+                        for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
                             gid = gen_batch_output.batch['gids'][i]
                             batch.append(macro_batch[gid])
                         print(f'batch size: {len(batch)}')
