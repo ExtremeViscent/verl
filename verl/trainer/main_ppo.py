@@ -22,7 +22,9 @@ import hydra
 
 @hydra.main(config_path='config', config_name='ppo_trainer', version_base=None)
 def main(config):
-    run_ppo(config)
+    # run_ppo(config)
+    from verl.utils.reward_score.kk import compute_score
+    run_ppo(config, compute_score)
 
 
 def run_ppo(config, compute_score=None):

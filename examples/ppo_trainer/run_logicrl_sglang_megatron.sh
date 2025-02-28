@@ -1,4 +1,4 @@
-DATA_DIR=$HOME/data/gsm8k
+DATA_DIR=$HOME/Logic-RL/data/kk/instruct/7ppl/
 
 TP_SIZE=8
 PP_SIZE=2
@@ -16,7 +16,7 @@ ray job submit --address="http://localhost:8265" \
     data.train_batch_size=256 \
     data.val_batch_size=6312 \
     data.max_prompt_length=512 \
-    data.max_response_length=8192 \
+    data.max_response_length=10240 \
     actor_rollout_ref.model.path=meta-llama/Llama-3.2-3B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
