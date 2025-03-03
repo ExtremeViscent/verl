@@ -513,14 +513,16 @@ class RayPPOTrainer(object):
                                          drop_last=True,
                                          collate_fn=collate_fn)
 
-        assert len(self.train_dataloader) >= 1
-        assert len(self.val_dataloader) >= 1
+        assert len(self.train_dataloader) >= 1, f'len(self.train_dataloader)={len(self.train_dataloader)}'
+        assert len(self.val_dataloader) >= 1, f'len(self.val_dataloader)={len(self.val_dataloader)}'
 
         print(f'Size of train dataloader: {len(self.train_dataloader)}')
         print(f'Size of val dataloader: {len(self.val_dataloader)}')
 
         # inject total_training_steps to actor/critic optim_config. This is hacky.
         total_training_steps = len(self.train_dataloader) * self.config.trainer.total_epochs
+        if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+            total_training_steps *= self.config.actor_rollout_ref.rollout.n_groups
 
         if self.config.trainer.total_training_steps is not None:
             total_training_steps = self.config.trainer.total_training_steps
@@ -868,7 +870,7 @@ class RayPPOTrainer(object):
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                 macro_gen_batch.meta_info['n_groups'] = n_groups
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                for k in range(n_groups):
+                for k in range(ceil(macro_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)):
                     metrics = {}
                     timing_raw = {}
 
