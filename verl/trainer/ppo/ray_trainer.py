@@ -24,6 +24,7 @@ from enum import Enum
 from pprint import pprint
 from typing import List, Type, Dict
 from copy import deepcopy
+from math import ceil
 
 import numpy as np
 from codetiming import Timer
@@ -870,7 +871,7 @@ class RayPPOTrainer(object):
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                 macro_gen_batch.meta_info['n_groups'] = n_groups
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                for k in range(ceil(macro_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)):
+                for k in range(ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)):
                     metrics = {}
                     timing_raw = {}
 
