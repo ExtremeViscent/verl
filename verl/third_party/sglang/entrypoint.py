@@ -85,7 +85,7 @@ class Entrypoint(SpmdEntrypoint):
                             completed_rids = [original_rids[i] for i in completed_gids]
                             pending_rids = [original_rids[i] for i in pending_gids]
                             return finished_outputs, completed_rids, pending_rids
-            elif num_return_sequences is not None and num_return_sequences != obj.batch_size:
+            elif num_return_sequences is not None:
                 ret_count = 0
                 finished_outputs = []
                 completed_rids = []

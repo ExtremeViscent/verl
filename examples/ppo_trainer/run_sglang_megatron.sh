@@ -3,7 +3,7 @@ DATA_DIR=$HOME/data/gsm8k
 TP_SIZE=8
 PP_SIZE=4
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=False
+GROUP_SHUFFLE=True
 
 ray job submit --address="http://localhost:8265" \
   --runtime-env-json='{"working_dir": "./"}' \
@@ -44,6 +44,7 @@ ray job submit --address="http://localhost:8265" \
     trainer.project_name='verl_sglang_gsm8k' \
     trainer.experiment_name=GroupShuffle-$GROUP_SHUFFLE \
     +trainer.val_before_train=True \
+    +trainer.remove_previous_ckpt_in_save=True \
     trainer.default_hdfs_dir=null \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=4 \
