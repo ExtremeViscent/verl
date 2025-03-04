@@ -6,14 +6,17 @@ on:
   push:
     branches:
       - main
+      - v0.2.x
     paths:
       - "**/*.py"
       - .github/workflows/e2e_gsm8k.yml
   pull_request:
     branches:
       - main
+      - v0.2.x
     paths:
       - "**/*.py"
+      - "verl/trainer/config/*.yaml"
       - .github/workflows/e2e_gsm8k.yml
       - "tests/e2e/*.sh"
 
