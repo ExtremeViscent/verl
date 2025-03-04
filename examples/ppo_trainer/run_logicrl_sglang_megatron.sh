@@ -38,7 +38,6 @@ ray job submit --address="http://localhost:8265" \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_sglang_logicrl_grpo' \
-    trainer.experiment_name=GroupShuffle-$GROUP_SHUFFLE \
     +trainer.val_before_train=True \
     trainer.default_hdfs_dir=null \
     trainer.n_gpus_per_node=8 \
