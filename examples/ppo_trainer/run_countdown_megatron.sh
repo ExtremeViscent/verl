@@ -1,9 +1,9 @@
-DATA_DIR=$HOME/data/gsm8k
+DATA_DIR=$HOME/data/countdown
 
 TP_SIZE=2
 PP_SIZE=4
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=True
+GROUP_SHUFFLE=False
 BASE_MODEL=Qwen/Qwen2.5-3B
 
 ray job submit --address="http://localhost:8265" \
@@ -16,7 +16,7 @@ ray job submit --address="http://localhost:8265" \
     data.train_batch_size=256 \
     data.val_batch_size=1024 \
     data.max_prompt_length=512 \
-    data.max_response_length=4096 \
+    data.max_response_length=2048 \
     actor_rollout_ref.model.path=$BASE_MODEL \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
