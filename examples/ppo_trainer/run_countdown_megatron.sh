@@ -1,9 +1,9 @@
 DATA_DIR=$HOME/data/gsm8k
 
-TP_SIZE=8
-PP_SIZE=2
-MICRO_BSZ_PER_GPU=4
-GROUP_SHUFFLE=False
+TP_SIZE=2
+PP_SIZE=4
+MICRO_BSZ_PER_GPU=1
+GROUP_SHUFFLE=True
 BASE_MODEL=Qwen/Qwen2.5-3B
 
 ray job submit --address="http://localhost:8265" \
@@ -43,12 +43,12 @@ ray job submit --address="http://localhost:8265" \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_sglang_tinyzero' \
-    trainer.experiment_name=GroupShuffle-$GROUP_SHUFFLE \
+    trainer.experiment_name=qwen2.5-3b-GroupShuffle-$GROUP_SHUFFLE \
     +trainer.val_before_train=True \
     +trainer.remove_previous_ckpt_in_save=True \
     trainer.default_hdfs_dir=null \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=2 \
     trainer.save_freq=-1 \
-    trainer.test_freq=14 \
+    trainer.test_freq=26 \
     trainer.total_epochs=100 2>&1 | tee verl_demo.log
