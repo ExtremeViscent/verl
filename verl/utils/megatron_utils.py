@@ -97,7 +97,7 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
     # Fp16 conversion.
     config = get_model_config(model[0])
     if config.fp16 or config.bf16:  # the ModelParallelConfig in GPTModel
-        model = [Float16Module(tfconfig, model_module) for model_module in model]
+        model = [Float16Module(config, model_module) for model_module in model]
 
     if wrap_with_ddp:
         model = [

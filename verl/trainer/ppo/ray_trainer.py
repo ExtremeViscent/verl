@@ -872,6 +872,9 @@ class RayPPOTrainer(object):
                 macro_batch.batch['gids'] = gids
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                 macro_gen_batch.meta_info['n_groups'] = n_groups
+                macro_gen_batch.meta_info['group_shuffle'] = getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False)
+                macro_gen_batch.meta_info['oversubscribe'] = getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False)
+                macro_gen_batch.meta_info['n_over'] = getattr(self.config.actor_rollout_ref.rollout, 'n_over', 1)
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
                 if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
                     n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)
