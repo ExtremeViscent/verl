@@ -158,6 +158,7 @@ class SGLangRollout(BaseRollout):
         self.group_meta = {}
         self.rid_to_gid = {}
         self.mini_bsz = None
+        self.minimum_length = -1
 
     @contextmanager
     def update_sampling_params(self, **kwargs):
@@ -228,7 +229,7 @@ class SGLangRollout(BaseRollout):
             self.group_kwargs = {}
 
     def generate_sequences_ingroup(self) -> DataProto:
-        batch_size = self.mini_bsz
+        batch_size = min(self.mini_bsz, len(self.group_cache))
         idx_list = []
         rids = []
         idx = []
@@ -250,9 +251,11 @@ class SGLangRollout(BaseRollout):
             print(self.sampling_params)
             gen_kwargs = {'num_return_sequences': batch_size} if self.sampling_params.get('n', 1) == 1 \
                 else {'num_return_groups': batch_size}
+            if len(idx_list) == batch_size and self.minimum_length > 0:
+                gen_kwargs['minimum_length'] = self.minimum_length
             output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
-                sampling_params=self.sampling_params,
+                sampling_params=self.sampling_params.copy(),
                 return_logprob=True,
                 input_ids=idx_list,
                 rid=rids,
@@ -273,6 +276,14 @@ class SGLangRollout(BaseRollout):
         gids = torch.stack(gids, dim=0).cpu()
         
         self.group_cache = {rid: self.group_cache[rid] for rid in remain_rids}
+
+        
+
+        if len(idx_list) > batch_size:
+            lengths = []
+            for l in output:
+                lengths.append(len(l['meta_info']['output_token_logprobs']))
+            self.minimum_length = 1024
             
         out = _post_process_outputs(self.tokenizer, output)
         # print(out)

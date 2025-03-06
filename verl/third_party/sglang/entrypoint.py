@@ -18,7 +18,13 @@ class Entrypoint(SpmdEntrypoint):
     def generate(self, 
                  obj: GenerateReqInput, 
                  num_return_sequences: Optional[int] = None, 
-                 num_return_groups: Optional[int] = None):
+                 num_return_groups: Optional[int] = None,
+                 minimum_length: Optional[int] = None,):
+        if minimum_length is not None:
+            obj.sampling_params['n'] = 5
+            obj.sampling_params['temperature'] = 0.7 if obj.sampling_params['temperature'] <= 0 else obj.sampling_params['temperature']
+            num_return_groups = num_return_sequences
+            num_return_sequences = None
         obj.normalize_batch_and_arguments()
         do_grpo = obj.parallel_sample_num > 1
         if do_grpo:
@@ -68,6 +74,20 @@ class Entrypoint(SpmdEntrypoint):
                             break
                         ret_count += 1
                     if ret_count >= obj.parallel_sample_num:
+                        max_response_len = -1
+                        for u in range(obj.parallel_sample_num):
+                            max_response_len = max(max_response_len, len(outputs[i * obj.parallel_sample_num + u]["meta_info"]["output_token_logprobs"]))
+                        if max_response_len < minimum_length:
+                            for u in range(obj.parallel_sample_num):
+                                index = i * obj.parallel_sample_num + u
+                                tokenized_request = tokenized_requests[index]
+                                rid = tokenized_request.rid
+                                tokenized_request.rid = uuid4()
+                                objs[index].rid = tokenized_request.rid
+                                rid_to_req_index[tokenized_request.rid] = index
+                                outputs[index] = None
+                                self._scheduler.handle_generate_request(tokenized_request)
+                            continue
                         completed_gids.append(i)
                         pending_gids.remove(i)
                         if len(completed_gids) >= num_return_groups:
@@ -76,10 +96,17 @@ class Entrypoint(SpmdEntrypoint):
                                     rid = objs[gid * obj.parallel_sample_num + u].rid
                                     self._scheduler.abort_request(AbortReq(rid=rid))
                             for gid in completed_gids:
-                                for v in range(obj.parallel_sample_num):
-                                    assert outputs[gid * obj.parallel_sample_num + v] is not None, f"idx: {gid * obj.parallel_sample_num + v} is None, completed_gids: {completed_gids}, pending_gids: {pending_gids}"
-                                    assert outputs[gid * obj.parallel_sample_num + v].get("meta_info", {}).get("finish_reason", None) is not None, f"idx: {gid * obj.parallel_sample_num + v} finish_reason is None"
-                                    finished_outputs.append(outputs[gid * obj.parallel_sample_num + v])
+                                if minimum_length is not None:
+                                    lengths = []
+                                    for v in range(obj.parallel_sample_num):
+                                        lengths.append(len(outputs[gid * obj.parallel_sample_num + v]["meta_info"]["output_token_logprobs"]))
+                                    max_idx = lengths.index(max(lengths))
+                                    finished_outputs.append(outputs[gid * obj.parallel_sample_num + max_idx])
+                                else:
+                                    for v in range(obj.parallel_sample_num):
+                                        assert outputs[gid * obj.parallel_sample_num + v] is not None, f"idx: {gid * obj.parallel_sample_num + v} is None, completed_gids: {completed_gids}, pending_gids: {pending_gids}"
+                                        assert outputs[gid * obj.parallel_sample_num + v].get("meta_info", {}).get("finish_reason", None) is not None, f"idx: {gid * obj.parallel_sample_num + v} finish_reason is None"
+                                        finished_outputs.append(outputs[gid * obj.parallel_sample_num + v])
                             while self._scheduler.process_batch():
                                 pass
                             completed_rids = [original_rids[i] for i in completed_gids]
@@ -147,7 +174,8 @@ class EngineFragment(EngineBase):
         stream: bool = False,
         rid: Optional[Union[List[str], str]] = None,
         num_return_sequences: Optional[int] = None,
-        num_return_groups: Optional[int] = None
+        num_return_groups: Optional[int] = None,
+        minimum_length: Optional[int] = None,
     ):
         obj = GenerateReqInput(
             text=prompt,
@@ -160,10 +188,10 @@ class EngineFragment(EngineBase):
             stream=stream,
             rid=rid,
         )
-        return self._generate_impl(obj, num_return_sequences, num_return_groups)
+        return self._generate_impl(obj, num_return_sequences, num_return_groups, minimum_length)
 
-    def _generate_impl(self, obj: GenerateReqInput, num_return_sequences: Optional[int] = None, num_return_groups: Optional[int] = None):
-        return self._entrypoint.generate(obj, num_return_sequences=num_return_sequences, num_return_groups=num_return_groups)
+    def _generate_impl(self, obj: GenerateReqInput, num_return_sequences: Optional[int] = None, num_return_groups: Optional[int] = None, minimum_length: Optional[int] = None):
+        return self._entrypoint.generate(obj, num_return_sequences=num_return_sequences, num_return_groups=num_return_groups, minimum_length=minimum_length)
 
     def update_weights_from_tensor(
         self,
