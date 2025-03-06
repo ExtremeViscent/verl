@@ -510,6 +510,8 @@ class RayPPOTrainer(object):
         macro_batch_size = self.config.data.train_batch_size
         if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
             macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_groups
+        if getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+            macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_over
         self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
                                          tokenizer=self.tokenizer,
                                          processor=self.processor,
@@ -923,7 +925,11 @@ class RayPPOTrainer(object):
                 macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                 macro_gen_batch.meta_info['n_groups'] = n_groups
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                for k in range(ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)):
+                if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+                    n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)
+                else:
+                    n_iter = 1
+                for k in range(n_iter):
                     metrics = {}
                     timing_raw = {}
 
