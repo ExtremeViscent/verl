@@ -17,7 +17,7 @@ the class for Worker
 import os
 import socket
 from dataclasses import dataclass
-from .decorator import register, Dispatch, Execute
+from verl.single_controller.base.decorator import register, Dispatch, Execute
 
 
 @dataclass
@@ -79,7 +79,6 @@ class WorkerMeta:
 
 # we assume that in each WorkerGroup, there is a Master Worker
 class Worker(WorkerHelper):
-    """A (distributed) worker."""
 
     def __new__(cls, *args, **kwargs):
         instance = super().__new__(cls)

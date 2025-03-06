@@ -16,7 +16,8 @@ ray job submit --address="http://localhost:8265" \
   -- python3 -m verl.trainer.main_ppo --config-path=./config --config-name='ppo_megatron_trainer'\
     data.train_files="$train_files" \
     data.val_files="$test_files" \
-    data.train_batch_size=1024 \
+    data.train_batch_size=256 \
+    data.val_batch_size=6312 \
     data.max_prompt_length=1024 \
     data.max_response_length=4096 \
     actor_rollout_ref.model.path=deepseek-ai/deepseek-coder-6.7b-instruct \

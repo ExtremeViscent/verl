@@ -19,6 +19,7 @@ Data
      max_prompt_length: 512
      max_response_length: 512
      train_batch_size: 1024
+     val_batch_size: 1312
      return_raw_input_ids: False  # This should be set to true when the tokenizer between policy and rm differs
      return_raw_chat: False
 
@@ -38,6 +39,8 @@ Data
   algorithms (e.g. PPO) generates up to this length
 - ``data.train_batch_size``: Batch size sampled for one training
   iteration of different RL algorithms.
+- ``data.val_batch_size``: Batch size sampled for one validation
+  iteration.
 - ``data.return_raw_input_ids``: Whether to return the original
   input_ids without adding chat template. This is mainly used to
   accommodate situations where the reward model's chat template differs
@@ -127,7 +130,7 @@ Actor/Rollout/Reference Policy
       # for hf rollout
       do_sample: True
       # number of responses (i.e. num sample times)
-      n: 1 # > 1 for grpo, rloo
+      n: 1 # > 1 for grpo
 
 **Common config for actor, rollout and reference model**
 
@@ -325,7 +328,7 @@ Algorithm
 
 - ``gemma``: discount factor
 - ``lam``: Trade-off between bias and variance in the GAE estimator
-- ``adv_estimator``: Support ``gae``, ``grpo``, ``reinforce_plus_plus``, ``rloo``
+- ``adv_estimator``: Support ``gae``, ``grpo``, ``reinforce_plus_plus``. 
 - ``kl_penalty``: Support ``kl``, ``abs``, ``mse`` and ``full``. How to
   calculate the kl divergence between actor and reference policy. For
   specific options, refer to `core_algos.py <https://github.com/volcengine/verl/blob/main/verl/trainer/ppo/core_algos.py#L192>`_ .

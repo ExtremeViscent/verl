@@ -39,7 +39,7 @@ def run_ppo(config, compute_score=None):
 
 @ray.remote(num_cpus=1)  # please make sure main_task is not scheduled on head
 def main_task(config, compute_score=None):
-    from verl.utils.fs import copy_to_local
+    from verl.utils.fs import copy_local_path_from_hdfs
     # print initial config
     from pprint import pprint
     from omegaconf import OmegaConf
@@ -47,12 +47,11 @@ def main_task(config, compute_score=None):
     OmegaConf.resolve(config)
 
     # download the checkpoint from hdfs
-    local_path = copy_to_local(config.actor_rollout_ref.model.path)
+    local_path = copy_local_path_from_hdfs(config.actor_rollout_ref.model.path)
 
     # instantiate tokenizer
-    from verl.utils import hf_tokenizer, hf_processor
+    from verl.utils import hf_tokenizer
     tokenizer = hf_tokenizer(local_path)
-    processor = hf_processor(local_path, use_fast=True)  # used for multimodal LLM, could be none
 
     # define worker classes
     if config.actor_rollout_ref.actor.strategy == 'fsdp':
@@ -122,7 +121,6 @@ def main_task(config, compute_score=None):
 
     trainer = RayPPOTrainer(config=config,
                             tokenizer=tokenizer,
-                            processor=processor,
                             role_worker_mapping=role_worker_mapping,
                             resource_pool_manager=resource_pool_manager,
                             ray_worker_group_cls=ray_worker_group_cls,

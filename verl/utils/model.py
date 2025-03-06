@@ -248,21 +248,12 @@ def normalize_pp_vpp_params(params, num_hidden_layers, layer_name='layers'):
     return normalized_name_to_param
 
 
-def get_parallel_model_from_config(config,
-                                   megatron_config,
-                                   pre_process=None,
-                                   post_process=None,
-                                   share_embeddings_and_output_weights=False,
-                                   value=False):
+def get_parallel_model_from_config(config, megatron_config, pre_process=None, post_process=None, value=False):
     from megatron.core import ModelParallelConfig
     assert isinstance(megatron_config, ModelParallelConfig)
     model_class = _get_parallel_model_architecture_from_config(config, value)
 
-    model = model_class(config,
-                        megatron_config,
-                        pre_process=pre_process,
-                        post_process=post_process,
-                        share_embeddings_and_output_weights=share_embeddings_and_output_weights)
+    model = model_class(config, megatron_config, pre_process=pre_process, post_process=post_process)
     return model
 
 
@@ -287,9 +278,9 @@ def load_megatron_model_weights(config,
     local_cache_path = os.path.expanduser(local_cache_path)
 
     if config.model.path.startswith("hdfs:"):
-        from verl.utils.fs import copy_to_local
+        from verl.utils.fs import copy_local_path_from_hdfs
         print(f'start download from {config.model.path}')
-        local_model_path = copy_to_local(src=config.model.path, cache_dir=local_cache_path)
+        local_model_path = copy_local_path_from_hdfs(src=config.model.path, cache_dir=local_cache_path)
         print('finish download')
     else:
         print(f"load from local dir {config.model.path}")
