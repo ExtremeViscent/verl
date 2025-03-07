@@ -252,9 +252,9 @@ class SGLangRollout(BaseRollout):
             print(self.sampling_params)
             gen_kwargs = {'num_return_sequences': batch_size} if self.sampling_params.get('n', 1) == 1 \
                 else {'num_return_groups': batch_size}
-            if self.group_iter == self.group_meta['n_groups'] - 1 and self.group_meta['group_shuffle']:
+            # if self.group_iter == self.group_meta['n_groups'] - 1 and self.group_meta['group_shuffle']:
                 # gen_kwargs['minimum_length'] = self.minimum_length
-                gen_kwargs['skip_first'] = batch_size
+                # gen_kwargs['skip_first'] = batch_size
             output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params.copy(),

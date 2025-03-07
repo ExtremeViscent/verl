@@ -2,7 +2,7 @@ DATA_DIR=$HOME/data/countdown
 
 TP_SIZE=8
 PP_SIZE=2
-MICRO_BSZ_PER_GPU=4
+MICRO_BSZ_PER_GPU=1
 GROUP_SHUFFLE=True
 BASE_MODEL=meta-llama/Llama-3.2-3B-Instruct
 
@@ -16,7 +16,7 @@ ray job submit --address="http://localhost:8265" \
     data.train_batch_size=256 \
     data.val_batch_size=1024 \
     data.max_prompt_length=512 \
-    data.max_response_length=2048 \
+    data.max_response_length=8192 \
     actor_rollout_ref.model.path=$BASE_MODEL \
     actor_rollout_ref.actor.optim.lr=4e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
