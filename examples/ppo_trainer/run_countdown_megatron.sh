@@ -3,7 +3,7 @@ DATA_DIR=$HOME/data/countdown
 TP_SIZE=8
 PP_SIZE=2
 MICRO_BSZ_PER_GPU=4
-GROUP_SHUFFLE=False
+GROUP_SHUFFLE=True
 BASE_MODEL=meta-llama/Llama-3.2-3B-Instruct
 
 ray job submit --address="http://localhost:8265" \
@@ -31,7 +31,7 @@ ray job submit --address="http://localhost:8265" \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.temperature=0.6 \
     +actor_rollout_ref.rollout.group_shuffle=$GROUP_SHUFFLE \
-    +actor_rollout_ref.rollout.n_groups=2 \
+    +actor_rollout_ref.rollout.n_groups=4 \
     +actor_rollout_ref.rollout.oversubscribe=False \
     +actor_rollout_ref.rollout.n_over=4 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$MICRO_BSZ_PER_GPU \

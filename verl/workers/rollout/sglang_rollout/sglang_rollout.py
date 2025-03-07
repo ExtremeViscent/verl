@@ -159,6 +159,7 @@ class SGLangRollout(BaseRollout):
         self.rid_to_gid = {}
         self.mini_bsz = None
         self.minimum_length = -1
+        self.group_iter = 0
 
     @contextmanager
     def update_sampling_params(self, **kwargs):
@@ -185,7 +186,7 @@ class SGLangRollout(BaseRollout):
         return sampling_params
 
     def feed_group_cache(self, prompts: DataProto, **kwargs):
-        
+        self.group_iter = 0
         idx = prompts.batch['input_ids']  # (bs, prompt_length)
         # left-padded attention_mask
         attention_mask = prompts.batch['attention_mask']
@@ -209,7 +210,7 @@ class SGLangRollout(BaseRollout):
             }
         self.group_meta = prompts.meta_info
         if prompts.meta_info['group_shuffle']:
-            self.mini_bsz = bsz // prompts.meta_info['n_groups']
+            self.mini_bsz = bsz // (prompts.meta_info['n_groups'] + 1)
         elif prompts.meta_info['oversubscribe']:
             self.mini_bsz = bsz // prompts.meta_info['n_over']
         else:
@@ -251,8 +252,9 @@ class SGLangRollout(BaseRollout):
             print(self.sampling_params)
             gen_kwargs = {'num_return_sequences': batch_size} if self.sampling_params.get('n', 1) == 1 \
                 else {'num_return_groups': batch_size}
-            if len(idx_list) == batch_size and self.minimum_length > 0:
-                gen_kwargs['minimum_length'] = self.minimum_length
+            if self.group_iter == self.group_meta['n_groups'] - 1 and self.group_meta['group_shuffle']:
+                # gen_kwargs['minimum_length'] = self.minimum_length
+                gen_kwargs['skip_first'] = batch_size
             output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params.copy(),
@@ -279,11 +281,11 @@ class SGLangRollout(BaseRollout):
 
         
 
-        if len(idx_list) > batch_size:
-            lengths = []
-            for l in output:
-                lengths.append(len(l['meta_info']['output_token_logprobs']))
-            self.minimum_length = 1024
+        # if len(idx_list) > batch_size:
+        #     lengths = []
+        #     for l in output:
+        #         lengths.append(len(l['meta_info']['output_token_logprobs']))
+        #     self.minimum_length = 1024
             
         out = _post_process_outputs(self.tokenizer, output)
         # print(out)
@@ -332,6 +334,8 @@ class SGLangRollout(BaseRollout):
         # free vllm cache engine
         if self.config.free_cache_engine:
             self.inference_engine._entrypoint._scheduler.flush_cache()
+
+        self.group_iter += 1
 
         return DataProto(batch=batch)
 

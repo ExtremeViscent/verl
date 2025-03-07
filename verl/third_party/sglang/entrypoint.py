@@ -19,7 +19,8 @@ class Entrypoint(SpmdEntrypoint):
                  obj: GenerateReqInput, 
                  num_return_sequences: Optional[int] = None, 
                  num_return_groups: Optional[int] = None,
-                 minimum_length: Optional[int] = None,):
+                 minimum_length: Optional[int] = None,
+                 skip_first: Optional[int] = 0):
         if minimum_length is not None:
             obj.sampling_params['n'] = 5
             obj.sampling_params['temperature'] = 0.7 if obj.sampling_params['temperature'] <= 0 else obj.sampling_params['temperature']
@@ -113,7 +114,7 @@ class Entrypoint(SpmdEntrypoint):
                             pending_rids = [original_rids[i] for i in pending_gids]
                             return finished_outputs, completed_rids, pending_rids
             elif num_return_sequences is not None:
-                ret_count = 0
+                ret_count = 0 - skip_first
                 finished_outputs = []
                 completed_rids = []
                 pending_rids = [r.rid for r in objs]
@@ -121,7 +122,8 @@ class Entrypoint(SpmdEntrypoint):
                     if output is not None and output.get("meta_info", {}).get("finish_reason", None) is not None:
                         ret_count += 1
                         pending_rids.remove(output["meta_info"]["id"])
-                        completed_rids.append(output["meta_info"]["id"])
+                        if ret_count > 0:
+                            completed_rids.append(output["meta_info"]["id"])
                     if ret_count >= num_return_sequences:
                         for rid in pending_rids:
                             self._scheduler.abort_request(AbortReq(rid=rid))
@@ -176,6 +178,7 @@ class EngineFragment(EngineBase):
         num_return_sequences: Optional[int] = None,
         num_return_groups: Optional[int] = None,
         minimum_length: Optional[int] = None,
+        skip_first: Optional[int] = 0,
     ):
         obj = GenerateReqInput(
             text=prompt,
@@ -188,10 +191,10 @@ class EngineFragment(EngineBase):
             stream=stream,
             rid=rid,
         )
-        return self._generate_impl(obj, num_return_sequences, num_return_groups, minimum_length)
+        return self._generate_impl(obj, num_return_sequences, num_return_groups, minimum_length, skip_first)
 
-    def _generate_impl(self, obj: GenerateReqInput, num_return_sequences: Optional[int] = None, num_return_groups: Optional[int] = None, minimum_length: Optional[int] = None):
-        return self._entrypoint.generate(obj, num_return_sequences=num_return_sequences, num_return_groups=num_return_groups, minimum_length=minimum_length)
+    def _generate_impl(self, obj: GenerateReqInput, num_return_sequences: Optional[int] = None, num_return_groups: Optional[int] = None, minimum_length: Optional[int] = None, skip_first: Optional[int] = 0):
+        return self._entrypoint.generate(obj, num_return_sequences=num_return_sequences, num_return_groups=num_return_groups, minimum_length=minimum_length, skip_first=skip_first)
 
     def update_weights_from_tensor(
         self,

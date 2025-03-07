@@ -479,7 +479,7 @@ class RayPPOTrainer(object):
         # TODO: we have to make sure the batch size is divisible by the dp size
         macro_batch_size = self.config.data.train_batch_size
         if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
-            macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_groups
+            macro_batch_size = macro_batch_size * (self.config.actor_rollout_ref.rollout.n_groups + 1)
         if getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
             macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_over
         self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
@@ -877,7 +877,7 @@ class RayPPOTrainer(object):
                 macro_gen_batch.meta_info['n_over'] = getattr(self.config.actor_rollout_ref.rollout, 'n_over', 1)
                 self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
                 if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
-                    n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)
+                    n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size) - 1
                 else:
                     n_iter = 1
                 for k in range(n_iter):
