@@ -33,6 +33,9 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
     elif data_source in ['countdown']:
         from . import countdown
         res = countdown.compute_score(solution_str, ground_truth)
+    elif data_source in ['kk_logic']:
+        from . import kk
+        res = kk.compute_score(solution_str, ground_truth)
     else:
         raise NotImplementedError
 

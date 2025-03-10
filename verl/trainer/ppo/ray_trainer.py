@@ -516,8 +516,8 @@ class RayPPOTrainer(object):
                                          drop_last=True,
                                          collate_fn=collate_fn)
 
-        assert len(self.train_dataloader) >= 1
-        assert len(self.val_dataloader) >= 1
+        assert len(self.train_dataloader) >= 1, f'len(self.train_dataloader)={len(self.train_dataloader)}'
+        assert len(self.val_dataloader) >= 1, f'len(self.val_dataloader)={len(self.val_dataloader)}'
 
         print(f'Size of train dataloader: {len(self.train_dataloader)}')
         print(f'Size of val dataloader: {len(self.val_dataloader)}')
