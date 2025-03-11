@@ -23,7 +23,7 @@ class Entrypoint(SpmdEntrypoint):
                  skip_first: Optional[int] = 0):
 
         if num_return_sequences is None and num_return_groups is None:
-            return super(SpmdEntrypoint, self).generate(obj)
+            return super().generate(obj)
         
         if minimum_length is not None:
             obj.sampling_params['n'] = 5
@@ -202,7 +202,7 @@ class EngineFragment(EngineBase):
         skip_first: Optional[int] = 0,
     ):
         do_grpo = sampling_params.get('n', 1) > 1
-        if do_grpo:
+        if do_grpo and num_return_groups is None and num_return_sequences is None:
             n = sampling_params['n']
             sampling_params['n'] = 1
             for i in range(len(input_ids)):

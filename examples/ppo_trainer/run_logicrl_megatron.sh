@@ -3,7 +3,7 @@ DATA_DIR=$HOME/data/kk
 TP_SIZE=8
 PP_SIZE=4
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=False
+GROUP_SHUFFLE=True
 BASE_MODEL=meta-llama/Llama-3.1-8B-Instruct
 
 ray job submit --address="http://localhost:8265" \
