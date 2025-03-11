@@ -61,6 +61,10 @@ class NaiveRewardManager:
 
             extra_info = data_item.non_tensor_batch.get('extra_info', None)
 
+            if i==0:
+                print(f"Text: {sequences_str}")
+                print(f"Ground Truth: {ground_truth}")
+
             score = self.compute_score(
                 data_source=data_source,
                 solution_str=sequences_str,

@@ -21,18 +21,23 @@ class Entrypoint(SpmdEntrypoint):
                  num_return_groups: Optional[int] = None,
                  minimum_length: Optional[int] = None,
                  skip_first: Optional[int] = 0):
+
+        if num_return_sequences is None and num_return_groups is None:
+            return super(SpmdEntrypoint, self).generate(obj)
+        
         if minimum_length is not None:
             obj.sampling_params['n'] = 5
             obj.sampling_params['temperature'] = 0.7 if obj.sampling_params['temperature'] <= 0 else obj.sampling_params['temperature']
             num_return_groups = num_return_sequences
             num_return_sequences = None
+        n = obj.sampling_params.get('n', 1)
+        do_grpo = n > 1
+        obj.sampling_params['n'] = 1
         obj.normalize_batch_and_arguments()
-        do_grpo = obj.parallel_sample_num > 1
         if do_grpo:
             original_rids = obj.rid
             objs = []
             for i in range(obj.batch_size):
-                n = obj.parallel_sample_num
                 for j in range(n):
                     new_obj = obj[i]
                     new_obj.rid = uuid4()
@@ -41,9 +46,9 @@ class Entrypoint(SpmdEntrypoint):
             objs = [obj] if obj.is_single else [obj[i] for i in range(obj.batch_size)]
         tokenized_requests = self._generation_converter.tokenize_requests(objs)
         rid_to_req_index = {r.rid: i for i, r in enumerate(tokenized_requests)}
-        print(f"batch_size: {obj.batch_size}, parallel_sample_num: {obj.parallel_sample_num}, num_return_sequences: {num_return_sequences}, num_return_groups: {num_return_groups}")
+        print(f"batch_size: {obj.batch_size}, parallel_sample_num: {num_return_groups}, num_return_sequences: {num_return_sequences}, num_return_groups: {num_return_groups}")
 
-        outputs: List[Dict[str, Any]] = [None] * obj.batch_size * obj.parallel_sample_num
+        outputs: List[Dict[str, Any]] = [None] * obj.batch_size * n
 
         def _handle_scheduler_output(batch_token_id_out: BatchTokenIDOut):
             batch_str_out = self._detokenizer.handle_batch_token_id_out(
@@ -70,51 +75,51 @@ class Entrypoint(SpmdEntrypoint):
                 pending_gids = [i for i in range(obj.batch_size)]
                 for i in range(obj.batch_size):
                     ret_count = 0
-                    for j in range(obj.parallel_sample_num):
-                        if outputs[i * obj.parallel_sample_num + j] is None or outputs[i * obj.parallel_sample_num + j].get("meta_info", {}).get("finish_reason", None) is None:
+                    for j in range(n):
+                        if outputs[i * n + j] is None or outputs[i * n + j].get("meta_info", {}).get("finish_reason", None) is None:
                             break
                         ret_count += 1
-                    if ret_count >= obj.parallel_sample_num:
-                        max_response_len = -1
-                        for u in range(obj.parallel_sample_num):
-                            max_response_len = max(max_response_len, len(outputs[i * obj.parallel_sample_num + u]["meta_info"]["output_token_logprobs"]))
-                        if max_response_len < minimum_length:
-                            for u in range(obj.parallel_sample_num):
-                                index = i * obj.parallel_sample_num + u
-                                tokenized_request = tokenized_requests[index]
-                                rid = tokenized_request.rid
-                                tokenized_request.rid = uuid4()
-                                objs[index].rid = tokenized_request.rid
-                                rid_to_req_index[tokenized_request.rid] = index
-                                outputs[index] = None
-                                self._scheduler.handle_generate_request(tokenized_request)
-                            continue
+                    if ret_count >= n:
+                        # max_response_len = -1
+                        # for u in range(obj.parallel_sample_num):
+                        #     max_response_len = max(max_response_len, len(outputs[i * obj.parallel_sample_num + u]["meta_info"]["output_token_logprobs"]))
+                        # if max_response_len < minimum_length:
+                        #     for u in range(obj.parallel_sample_num):
+                        #         index = i * obj.parallel_sample_num + u
+                        #         tokenized_request = tokenized_requests[index]
+                        #         rid = tokenized_request.rid
+                        #         tokenized_request.rid = uuid4()
+                        #         objs[index].rid = tokenized_request.rid
+                        #         rid_to_req_index[tokenized_request.rid] = index
+                        #         outputs[index] = None
+                        #         self._scheduler.handle_generate_request(tokenized_request)
+                        #     continue
                         completed_gids.append(i)
                         pending_gids.remove(i)
                         if len(completed_gids) >= num_return_groups:
                             for gid in pending_gids:
-                                for u in range(obj.parallel_sample_num):
-                                    rid = objs[gid * obj.parallel_sample_num + u].rid
+                                for u in range(n):
+                                    rid = objs[gid * n + u].rid
                                     self._scheduler.abort_request(AbortReq(rid=rid))
                             for gid in completed_gids:
                                 if minimum_length is not None:
                                     lengths = []
-                                    for v in range(obj.parallel_sample_num):
-                                        lengths.append(len(outputs[gid * obj.parallel_sample_num + v]["meta_info"]["output_token_logprobs"]))
+                                    for v in range(n):
+                                        lengths.append(len(outputs[gid * n + v]["meta_info"]["output_token_logprobs"]))
                                     max_idx = lengths.index(max(lengths))
-                                    finished_outputs.append(outputs[gid * obj.parallel_sample_num + max_idx])
+                                    finished_outputs.append(outputs[gid * n + max_idx])
                                 else:
-                                    for v in range(obj.parallel_sample_num):
-                                        assert outputs[gid * obj.parallel_sample_num + v] is not None, f"idx: {gid * obj.parallel_sample_num + v} is None, completed_gids: {completed_gids}, pending_gids: {pending_gids}"
-                                        assert outputs[gid * obj.parallel_sample_num + v].get("meta_info", {}).get("finish_reason", None) is not None, f"idx: {gid * obj.parallel_sample_num + v} finish_reason is None"
-                                        finished_outputs.append(outputs[gid * obj.parallel_sample_num + v])
+                                    for v in range(n):
+                                        assert outputs[gid * n + v] is not None, f"idx: {gid * n + v} is None, completed_gids: {completed_gids}, pending_gids: {pending_gids}"
+                                        assert outputs[gid * n + v].get("meta_info", {}).get("finish_reason", None) is not None, f"idx: {gid * n + v} finish_reason is None"
+                                        finished_outputs.append(outputs[gid * n + v])
                             while self._scheduler.process_batch():
                                 pass
                             completed_rids = [original_rids[i] for i in completed_gids]
                             pending_rids = [original_rids[i] for i in pending_gids]
                             return finished_outputs, completed_rids, pending_rids
             elif num_return_sequences is not None:
-                ret_count = 0 - skip_first
+                ret_count = 0
                 finished_outputs = []
                 completed_rids = []
                 pending_rids = [r.rid for r in objs]
@@ -124,7 +129,7 @@ class Entrypoint(SpmdEntrypoint):
                         pending_rids.remove(output["meta_info"]["id"])
                         if ret_count > 0:
                             completed_rids.append(output["meta_info"]["id"])
-                    if ret_count >= num_return_sequences:
+                    if ret_count >= num_return_sequences or len(pending_rids) == 0:
                         for rid in pending_rids:
                             self._scheduler.abort_request(AbortReq(rid=rid))
                         for output in outputs:
@@ -136,7 +141,23 @@ class Entrypoint(SpmdEntrypoint):
             else:
                 pass
 
-        if num_return_sequences is not None or num_return_groups is not None:
+        if num_return_sequences is not None:
+            finished_outputs = []
+            completed_rids = []
+            pending_rids = [r.rid for r in objs]
+            for output in outputs:
+                if output is not None and output.get("meta_info", {}).get("finish_reason", None) is not None:
+                    completed_rids.append(output["meta_info"]["id"])
+                    if output["meta_info"]["id"] in pending_rids:
+                        pending_rids.remove(output["meta_info"]["id"])
+                    finished_outputs.append(output)
+            return finished_outputs, completed_rids, pending_rids
+        elif num_return_groups is not None:
+            finished_outputs = outputs
+            completed_gids = [i for i in range(obj.batch_size)]
+            pending_gids = []
+            completed_rids = [original_rids[i] for i in completed_gids]
+            pending_rids = []
             return finished_outputs, completed_rids, pending_rids
         else:
             return outputs
@@ -180,6 +201,14 @@ class EngineFragment(EngineBase):
         minimum_length: Optional[int] = None,
         skip_first: Optional[int] = 0,
     ):
+        do_grpo = sampling_params.get('n', 1) > 1
+        if do_grpo:
+            n = sampling_params['n']
+            sampling_params['n'] = 1
+            for i in range(len(input_ids)):
+                input_ids_ = []
+                for j in range(n):
+                    input_ids_.append(input_ids[i])
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,

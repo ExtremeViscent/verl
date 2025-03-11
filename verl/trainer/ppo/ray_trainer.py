@@ -868,18 +868,19 @@ class RayPPOTrainer(object):
         for epoch in range(self.config.trainer.total_epochs):
             for macro_batch_dict in self.train_dataloader:
                 macro_batch: DataProto = DataProto.from_single_dict(macro_batch_dict)
-                gids = torch.arange(macro_batch.batch['input_ids'].size(0))
-                macro_batch.batch['gids'] = gids
-                macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
-                macro_gen_batch.meta_info['n_groups'] = n_groups
-                macro_gen_batch.meta_info['group_shuffle'] = getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False)
-                macro_gen_batch.meta_info['oversubscribe'] = getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False)
-                macro_gen_batch.meta_info['n_over'] = getattr(self.config.actor_rollout_ref.rollout, 'n_over', 1)
-                self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
                 if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+                    gids = torch.arange(macro_batch.batch['input_ids'].size(0))
+                    macro_batch.batch['gids'] = gids
+                    macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
+                    macro_gen_batch.meta_info['n_groups'] = n_groups
+                    macro_gen_batch.meta_info['group_shuffle'] = getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False)
+                    macro_gen_batch.meta_info['oversubscribe'] = getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False)
+                    macro_gen_batch.meta_info['n_over'] = getattr(self.config.actor_rollout_ref.rollout, 'n_over', 1)
+                    self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
                     n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)
                 else:
                     n_iter = 1
+                    gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
                 for k in range(n_iter):
                     metrics = {}
                     timing_raw = {}
@@ -893,14 +894,18 @@ class RayPPOTrainer(object):
                     with _timer('step', timing_raw):
                         # generate a batch
                         with _timer('gen', timing_raw):
-                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
-                        batch = []
-                        stride = self.config.actor_rollout_ref.rollout.n
-                        for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
-                            gid = gen_batch_output.batch['gids'][i]
-                            batch.append(macro_batch[gid])
-                        print(f'batch size: {len(batch)}')
-                        batch = batch_collate_fn(batch)
+                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup() \
+                                if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) else self.actor_rollout_wg.generate_sequences(gen_batch)
+                        if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+                            batch = []
+                            stride = self.config.actor_rollout_ref.rollout.n
+                            for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
+                                gid = gen_batch_output.batch['gids'][i]
+                                batch.append(macro_batch[gid])
+                            print(f'batch size: {len(batch)}')
+                            batch = batch_collate_fn(batch)
+                        else:
+                            batch = macro_batch
 
                         if self.config.algorithm.adv_estimator == 'remax':
                             raise NotImplementedError('remax is not implemented yet')

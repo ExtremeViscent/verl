@@ -210,7 +210,7 @@ class SGLangRollout(BaseRollout):
             }
         self.group_meta = prompts.meta_info
         if prompts.meta_info['group_shuffle']:
-            self.mini_bsz = bsz // (prompts.meta_info['n_groups'] + 1)
+            self.mini_bsz = bsz // prompts.meta_info['n_groups']
         elif prompts.meta_info['oversubscribe']:
             self.mini_bsz = bsz // prompts.meta_info['n_over']
         else:
