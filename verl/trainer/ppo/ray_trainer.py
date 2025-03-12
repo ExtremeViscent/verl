@@ -312,6 +312,22 @@ def compute_timing_metrics(batch, timing_raw):
         },
     }
 
+def log_hparams(config):
+    batch_size = config.data.train_batch_size
+    gen_len = config.data.max_response_length
+    pp_size = config.actor_rollout_ref.actor.megatron.pipeline_model_parallel_size
+    tp_size = config.actor_rollout_ref.actor.megatron.tensor_model_parallel_size
+    world_size = config.trainer.n_gpus_per_node * config.trainer.nnodes
+    dp_size = world_size // (pp_size * tp_size)
+    return {
+        'batch_size': batch_size,
+        'gen_len': gen_len,
+        'pp_size': pp_size,
+        'tp_size': tp_size,
+        'dp_size': dp_size,
+        'world_size': world_size,
+    }
+
 def split_batch(batch: dict, num_splits: int) -> list[dict]:
     splits = [{} for _ in range(num_splits)]
     for key, val in batch.items():
@@ -1015,7 +1031,9 @@ class RayPPOTrainer(object):
 
                     # collect metrics
                     metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                    metrics = {}
                     metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
+                    metrics.update(log_hparams(self.config))
 
                     # TODO: make a canonical logger that supports various backend
                     logger.log(data=metrics, step=self.global_steps)
