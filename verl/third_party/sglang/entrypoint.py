@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
+import copy
 
 import torch
 
@@ -22,8 +23,11 @@ class Entrypoint(SpmdEntrypoint):
                  minimum_length: Optional[int] = None,
                  skip_first: Optional[int] = 0):
 
-        if num_return_sequences is None and num_return_groups is None:
-            return super().generate(obj)
+        # if num_return_sequences is None and num_return_groups is None:
+        #     ret = super().generate(obj)
+        #     torch.save(ret, "/home/aiscuser/output.pt")
+        #     print(f"waiting for output: {len(self._scheduler.waiting_queue)}")
+        #     return ret
         
         if minimum_length is not None:
             obj.sampling_params['n'] = 5
@@ -68,7 +72,7 @@ class Entrypoint(SpmdEntrypoint):
             self._scheduler.handle_generate_request(tokenized_request)
 
         finished_outputs = outputs
-        while self._scheduler.process_batch():
+        while self._scheduler.process_batch() or len(self._scheduler.waiting_queue) > 0:
             if num_return_groups is not None:
                 finished_outputs = []
                 completed_gids = []
@@ -203,13 +207,18 @@ class EngineFragment(EngineBase):
     ):
         do_grpo = sampling_params.get('n', 1) > 1
         if do_grpo and num_return_groups is None and num_return_sequences is None:
+            torch.save(input_ids, "/home/aiscuser/original_input_ids.pt")
             n = sampling_params['n']
             sampling_params['n'] = 1
             input_ids_ = []
             for i in range(len(input_ids)):
                 for j in range(n):
-                    input_ids_.append(input_ids[i].copy())
+                    input_id_ = copy.deepcopy(input_ids[i])
+                    input_ids_.append(input_id_)
+            del input_ids
             input_ids = input_ids_
+            torch.save(input_ids, "/home/aiscuser/input_ids.pt")
+            print(f"fixing input_ids: {len(input_ids)}")
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,

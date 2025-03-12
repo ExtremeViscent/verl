@@ -488,7 +488,8 @@ class RayPPOTrainer(object):
                                          max_prompt_length=self.config.data.max_prompt_length,
                                          filter_prompts=True,
                                          return_raw_chat=self.config.data.get('return_raw_chat', False),
-                                         truncation='error')
+                                         truncation='error',
+                                         dummy=self.config.data.get('dummy', False))
         # use sampler for better ckpt resume
         if self.config.data.shuffle:
             train_dataloader_generator = torch.Generator()
@@ -509,7 +510,8 @@ class RayPPOTrainer(object):
                                        max_prompt_length=self.config.data.max_prompt_length,
                                        filter_prompts=True,
                                        return_raw_chat=self.config.data.get('return_raw_chat', False),
-                                       truncation='error')
+                                       truncation='error',
+                                        dummy=self.config.data.get('dummy', False))
         self.val_dataloader = DataLoader(dataset=self.val_dataset,
                                          batch_size=len(self.val_dataset),
                                          shuffle=True,
@@ -1023,10 +1025,10 @@ class RayPPOTrainer(object):
                     if self.global_steps >= self.total_training_steps:
 
                         # perform validation after training
-                        if self.val_reward_fn is not None:
-                            val_metrics = self._validate()
-                            pprint(f'Final validation metrics: {val_metrics}')
-                            logger.log(data=val_metrics, step=self.global_steps)
+                        # if self.val_reward_fn is not None:
+                        #     val_metrics = self._validate()
+                        #     pprint(f'Final validation metrics: {val_metrics}')
+                        #     logger.log(data=val_metrics, step=self.global_steps)
                         if self.config.trainer.save_freq > 0 and \
                                 (self.global_steps - 1) % self.config.trainer.save_freq != 0:
                             with _timer('save_checkpoint', timing_raw):
