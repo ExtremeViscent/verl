@@ -7,9 +7,9 @@ import os
 tp_sizes   = [8]             # Example tensor model parallel sizes
 pp_sizes   = [4]         # Example pipeline model parallel sizes
 dp_sizes   = [2]           # Example data parallel sizes
-gen_lens   = [128, 256, 512, 1024]     # Example generation lengths
-bsz_per_devices = [4]          # Example batch sizes per device
-rollout_ns = [8]                # Example rollout numbers
+gen_lens   = [256]     # Example generation lengths
+bsz_per_devices = [1]          # Example batch sizes per device
+rollout_ns = [1,2,4,8,16,32,64,128,256]                # Example rollout numbers
 
 processes = []
 
