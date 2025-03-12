@@ -4,10 +4,10 @@ import os
 
 
 # Define the hyperparameter grid values
-tp_sizes   = [2, 4, 8]             # Example tensor model parallel sizes
-pp_sizes   = [2, 4, 8, 16]         # Example pipeline model parallel sizes
-dp_sizes   = [1,2]           # Example data parallel sizes
-gen_lens   = [128]     # Example generation lengths
+tp_sizes   = [8]             # Example tensor model parallel sizes
+pp_sizes   = [4]         # Example pipeline model parallel sizes
+dp_sizes   = [2]           # Example data parallel sizes
+gen_lens   = [128, 256, 512, 1024]     # Example generation lengths
 bsz_per_devices = [4]          # Example batch sizes per device
 rollout_ns = [8]                # Example rollout numbers
 
