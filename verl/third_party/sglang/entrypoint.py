@@ -205,10 +205,11 @@ class EngineFragment(EngineBase):
         if do_grpo and num_return_groups is None and num_return_sequences is None:
             n = sampling_params['n']
             sampling_params['n'] = 1
+            input_ids_ = []
             for i in range(len(input_ids)):
-                input_ids_ = []
                 for j in range(n):
-                    input_ids_.append(input_ids[i])
+                    input_ids_.append(input_ids[i].copy())
+            input_ids = input_ids_
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,
