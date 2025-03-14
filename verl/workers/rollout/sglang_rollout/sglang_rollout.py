@@ -187,6 +187,7 @@ class SGLangRollout(BaseRollout):
 
     def feed_group_cache(self, prompts: DataProto, **kwargs):
         self.group_iter = 0
+        self.group_cache = {}
         idx = prompts.batch['input_ids']  # (bs, prompt_length)
         # left-padded attention_mask
         attention_mask = prompts.batch['attention_mask']
@@ -209,9 +210,12 @@ class SGLangRollout(BaseRollout):
                 'gid': gid
             }
         self.group_meta = prompts.meta_info
-        if prompts.meta_info['group_shuffle']:
-            self.mini_bsz = bsz // prompts.meta_info['n_groups']
-        elif prompts.meta_info['oversubscribe']:
+        if prompts.meta_info.get('group_shuffle', False):
+            n_groups = prompts.meta_info['n_groups']
+            if prompts.meta_info.get('ctrl_len', False):
+                n_groups = n_groups + 1
+            self.mini_bsz = bsz // n_groups
+        elif prompts.meta_info.get('oversubscribe', False):
             self.mini_bsz = bsz // prompts.meta_info['n_over']
         else:
             self.mini_bsz = bsz
@@ -252,9 +256,11 @@ class SGLangRollout(BaseRollout):
             print(self.sampling_params)
             gen_kwargs = {'num_return_sequences': batch_size} if self.sampling_params.get('n', 1) == 1 \
                 else {'num_return_groups': batch_size}
-            # if self.group_iter == self.group_meta['n_groups'] - 1 and self.group_meta['group_shuffle']:
+            if self.group_iter == self.group_meta.get('n_groups',-1) - 1 \
+                and self.group_meta.get('group_shuffle',False) \
+                and self.group_meta.get('ctrl_len', False):
                 # gen_kwargs['minimum_length'] = self.minimum_length
-                # gen_kwargs['skip_first'] = batch_size
+                gen_kwargs['skip_first'] = batch_size
             output, completed_rids, remain_rids = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params.copy(),

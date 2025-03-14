@@ -22,9 +22,6 @@ class Entrypoint(SpmdEntrypoint):
                  minimum_length: Optional[int] = None,
                  skip_first: Optional[int] = 0):
 
-        if num_return_sequences is None and num_return_groups is None:
-            return super().generate(obj)
-        
         if minimum_length is not None:
             obj.sampling_params['n'] = 5
             obj.sampling_params['temperature'] = 0.7 if obj.sampling_params['temperature'] <= 0 else obj.sampling_params['temperature']
@@ -68,7 +65,7 @@ class Entrypoint(SpmdEntrypoint):
             self._scheduler.handle_generate_request(tokenized_request)
 
         finished_outputs = outputs
-        while self._scheduler.process_batch():
+        while self._scheduler.process_batch() or len(self._scheduler.waiting_queue) > 0:
             if num_return_groups is not None:
                 finished_outputs = []
                 completed_gids = []
@@ -119,7 +116,7 @@ class Entrypoint(SpmdEntrypoint):
                             pending_rids = [original_rids[i] for i in pending_gids]
                             return finished_outputs, completed_rids, pending_rids
             elif num_return_sequences is not None:
-                ret_count = 0
+                ret_count = 0 - skip_first
                 finished_outputs = []
                 completed_rids = []
                 pending_rids = [r.rid for r in objs]
@@ -201,14 +198,6 @@ class EngineFragment(EngineBase):
         minimum_length: Optional[int] = None,
         skip_first: Optional[int] = 0,
     ):
-        do_grpo = sampling_params.get('n', 1) > 1
-        if do_grpo and num_return_groups is None and num_return_sequences is None:
-            n = sampling_params['n']
-            sampling_params['n'] = 1
-            for i in range(len(input_ids)):
-                input_ids_ = []
-                for j in range(n):
-                    input_ids_.append(input_ids[i])
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,

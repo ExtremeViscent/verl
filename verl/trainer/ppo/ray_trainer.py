@@ -479,8 +479,11 @@ class RayPPOTrainer(object):
         # TODO: we have to make sure the batch size is divisible by the dp size
         macro_batch_size = self.config.data.train_batch_size
         if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
-            macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_groups
-        if getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+            if getattr(self.config.actor_rollout_ref.rollout, 'ctrl_len', False):
+                macro_batch_size = macro_batch_size * (self.config.actor_rollout_ref.rollout.n_groups+1)
+            else:
+                macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_groups
+        elif getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
             macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_over
         self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
                                          tokenizer=self.tokenizer,
@@ -873,11 +876,20 @@ class RayPPOTrainer(object):
                     macro_batch.batch['gids'] = gids
                     macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                     macro_gen_batch.meta_info['n_groups'] = n_groups
-                    macro_gen_batch.meta_info['group_shuffle'] = getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False)
+                    macro_gen_batch.meta_info['group_shuffle'] = True
+                    n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)
+                    if getattr(self.config.actor_rollout_ref.rollout, 'ctrl_len', False):
+                        n_iter -= 1
+                        macro_gen_batch.meta_info['ctrl_len'] = True
+                    self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
+                elif getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+                    n_iter = 1
+                    gids = torch.arange(macro_batch.batch['input_ids'].size(0))
+                    macro_batch.batch['gids'] = gids
+                    macro_gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids','gids'])
                     macro_gen_batch.meta_info['oversubscribe'] = getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False)
                     macro_gen_batch.meta_info['n_over'] = getattr(self.config.actor_rollout_ref.rollout, 'n_over', 1)
                     self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
-                    n_iter = ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size)
                 else:
                     n_iter = 1
                     gen_batch = macro_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
@@ -894,18 +906,19 @@ class RayPPOTrainer(object):
                     with _timer('step', timing_raw):
                         # generate a batch
                         with _timer('gen', timing_raw):
-                            gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup() \
-                                if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) else self.actor_rollout_wg.generate_sequences(gen_batch)
-                        if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
-                            batch = []
-                            stride = self.config.actor_rollout_ref.rollout.n
-                            for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
-                                gid = gen_batch_output.batch['gids'][i]
-                                batch.append(macro_batch[gid])
-                            print(f'batch size: {len(batch)}')
-                            batch = batch_collate_fn(batch)
-                        else:
-                            batch = macro_batch
+                            if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) \
+                                or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+                                gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
+                                batch = []
+                                stride = self.config.actor_rollout_ref.rollout.n
+                                for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
+                                    gid = gen_batch_output.batch['gids'][i]
+                                    batch.append(macro_batch[gid])
+                                print(f'batch size: {len(batch)}')
+                                batch = batch_collate_fn(batch)
+                            else:
+                                gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                                batch = macro_batch
 
                         if self.config.algorithm.adv_estimator == 'remax':
                             raise NotImplementedError('remax is not implemented yet')
