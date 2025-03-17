@@ -1,17 +1,94 @@
 import re
+from math_verify.metric import math_metric
+from math_verify.parser import LatexExtractionConfig, ExprExtractionConfig
 
+def last_boxed_only_string(string):
+    idx = string.rfind("\\boxed")
+    if idx < 0:
+        idx = string.rfind("\\fbox")
+        if idx < 0:
+            return None
+
+    i = idx
+    right_brace_idx = None
+    num_left_braces_open = 0
+    while i < len(string):
+        if string[i] == "{":
+            num_left_braces_open += 1
+        if string[i] == "}":
+            num_left_braces_open -= 1
+            if num_left_braces_open == 0:
+                right_brace_idx = i
+                break
+        i += 1
+
+    if right_brace_idx is None:
+        retval = None
+    else:
+        retval = string[idx : right_brace_idx + 1]
+
+    return retval
+
+
+def remove_boxed(s):
+    left = "\\boxed{"
+    try:
+        assert s[: len(left)] == left
+        assert s[-1] == "}"
+        return s[len(left) : -1]
+    except Exception:
+        return None
+    
+def remove_answer(s):
+    left = "<answer>"
+    right = "</answer>"
+    try:
+        assert s[: len(left)] == left
+        assert s[-len(right) :] == right
+        return s[len(left) : -len(right)]
+    except Exception:
+        return None
+
+
+def get_answer_str(s: str) -> str:
+    res = remove_boxed(last_boxed_only_string(s))
+    if res is not None:
+        return res
+    else:
+        res = remove_answer(s)
+        if res is not None:
+            return res
+        else:
+            return s
 
 def extract_solution(solution_str):
-
-    # pattern = re.compile(r"(\\boxed{.*})")
-    pattern = re.compile(r"<answer>.*?(\\boxed{.*}).*?</answer>", re.DOTALL)
-    matches = re.findall(pattern, solution_str)
-    result = matches[-1] if matches else ""
+    # First, find all <answer>...</answer> blocks
+    answer_pattern = re.compile(r"<answer>.*?</answer>", re.DOTALL)
+    answer_blocks = re.findall(answer_pattern, solution_str)
+    # Second, find \boxed{...} in each block
+    boxed_pattern = re.compile(r"\\boxed{.*?}")
+    matches = []
+    for block in answer_blocks:
+        boxed_matches = re.findall(boxed_pattern, block)
+        matches.extend(boxed_matches)
+    # Return the last match if it exists, else an empty string
+    result = matches[-1] if matches else answer_blocks[-1] if answer_blocks else ""
+    result =  "\\boxed{" + get_answer_str(result) + "}"
     return result
 
 def compute_format_score(text):
-    pattern = r'<answer>.*?(\\boxed\{.*?\}).*?</answer>'
-    return 1 if re.search(pattern, text, re.DOTALL) else 0
+    answer_pattern = re.compile(r"<answer>.*?</answer>", re.DOTALL)
+    boxed_pattern = re.compile(r"\\boxed{.*?}")
+    answer_blocks = re.findall(answer_pattern, text)
+    boxed_matches = []
+    for block in answer_blocks:
+        boxed_matches = re.findall(boxed_pattern, block)
+    if not answer_blocks:
+        return -2
+    elif not boxed_matches:
+        return -1
+    else:
+        return 0
 
 def compute_score(solution_str, ground_truth, format_score=0., score=1.):
     """The scoring function for GSM8k.
@@ -28,10 +105,16 @@ def compute_score(solution_str, ground_truth, format_score=0., score=1.):
     answer = extract_solution(solution_str=solution_str)
     format_score = compute_format_score(solution_str)
 
-    if answer is None:
-        return 0
-    else:
-        if answer == ground_truth:
-            return score + format_score
-        else:
-            return format_score
+    verify_func = math_metric(
+        gold_extraction_target=(LatexExtractionConfig(),),
+        pred_extraction_target=(ExprExtractionConfig(), LatexExtractionConfig()),
+    )
+    ret_score = 0.
+
+    ground_truth_boxed = "\\boxed{" + ground_truth + "}"
+    try:
+        ret_score, _ = verify_func([ground_truth_boxed], [answer])
+    except Exception as e:
+        print(e)
+
+    return ret_score + format_score

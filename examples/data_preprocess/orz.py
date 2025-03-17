@@ -7,16 +7,15 @@ import argparse
 
 
 def make_prefix(question):
-    prefix = f"""\
+    prefix = """\
 A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. \
-The reasoning process is enclosed within <think> </think> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. User: {question}\
-"""
+The reasoning process is enclosed within <think> </think> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>. And your final answer will be extracted automatically by the \\boxed{} tag. User: \
+""" + question
 
     return prefix
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_dir')
     parser.add_argument('--output_dir', default='~/data/orz')
     parser.add_argument('--hdfs_dir', default=None)
 
@@ -24,26 +23,18 @@ if __name__ == '__main__':
 
     data_source = 'orz'
 
-    data_file = args.input_dir
-    data_dir = os.path.dirname(data_file)
-    data_file = os.path.basename(data_file)
-    print(data_dir, data_file)
-
     dataset = datasets.load_dataset("/home/aiscuser",data_files=["orz_math_57k_collected.json"])['train']
 
     dataset = dataset.train_test_split(test_size=0.1)
     train_dataset = dataset['train']
     test_dataset = dataset['test']
 
-    instruction_following = "You must put your answer inside <answer> </answer> tags, i.e., <answer> answer here </answer>. And your final answer will be extracted automatically by the \\boxed{} tag."
-
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
 
         def process_fn(example, idx):
             question_raw = example.pop('0').pop('value')
-            question = instruction_following + ' ' + question_raw
-            question_raw = make_prefix(question_raw)
+            question = make_prefix(question_raw)
 
             
 
