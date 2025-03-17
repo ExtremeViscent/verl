@@ -3,11 +3,12 @@ DATA_DIR=$HOME/data/kk
 TP_SIZE=8
 PP_SIZE=4
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=False
+GROUP_SHUFFLE=True
 BASE_MODEL=meta-llama/Llama-3.1-8B-Instruct
 
 ray job submit --address="http://localhost:8265" \
   --runtime-env-json='{"working_dir": "./"}' \
+  --no-wait \
   -- python3 -m verl.trainer.main_ppo --config-path=config \
     --config-name='ppo_megatron_trainer.yaml'\
     actor_rollout_ref.rollout.name=sglang \
@@ -32,7 +33,7 @@ ray job submit --address="http://localhost:8265" \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.temperature=1 \
     +actor_rollout_ref.rollout.group_shuffle=$GROUP_SHUFFLE \
-    +actor_rollout_ref.rollout.n_groups=4 \
+    +actor_rollout_ref.rollout.n_groups=8 \
     +actor_rollout_ref.rollout.oversubscribe=True \
     +actor_rollout_ref.rollout.n_over=4 \
     +actor_rollout_ref.rollout.ctrl_len=False \
