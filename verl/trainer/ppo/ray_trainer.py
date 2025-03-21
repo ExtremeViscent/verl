@@ -16,6 +16,8 @@ FSDP PPO Trainer with Ray-based single controller.
 This trainer supports model-agonistic model initialization with huggingface
 """
 
+from collections import defaultdict
+from functools import partial
 import os
 import uuid
 from contextlib import contextmanager
@@ -35,6 +37,7 @@ from verl.protocol import collate_fn as batch_collate_fn
 from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayResourcePool, RayWorkerGroup, RayClassWithInitArgs
 from verl.single_controller.ray.base import create_colocated_worker_cls
+from verl.trainer.ppo.metric_utils import compute_data_metrics, compute_throughout_metrics, compute_timing_metrics, reduce_metrics, bootstrap_metric, calc_maj_val
 from verl.trainer.ppo import core_algos
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
@@ -201,116 +204,7 @@ def _compute_response_info(batch):
     )
 
 
-def compute_data_metrics(batch, use_critic=True):
-    # TODO: add response length
-    sequence_score = batch.batch['token_level_scores'].sum(-1)
-    sequence_reward = batch.batch['token_level_rewards'].sum(-1)
 
-    advantages = batch.batch['advantages']
-    returns = batch.batch['returns']
-
-    max_response_length = batch.batch['responses'].shape[-1]
-
-    prompt_mask = batch.batch['attention_mask'][:, :-max_response_length].bool()
-    response_mask = batch.batch['attention_mask'][:, -max_response_length:].bool()
-
-    max_prompt_length = prompt_mask.size(-1)
-
-    response_info = _compute_response_info(batch)
-    prompt_length = response_info['prompt_length']
-    response_length = response_info['response_length']
-
-    valid_adv = torch.masked_select(advantages, response_mask)
-    valid_returns = torch.masked_select(returns, response_mask)
-
-    if use_critic:
-        values = batch.batch['values']
-        valid_values = torch.masked_select(values, response_mask)
-        return_diff_var = torch.var(valid_returns - valid_values)
-        return_var = torch.var(valid_returns)
-
-    metrics = {
-        # score
-        'critic/score/mean':
-            torch.mean(sequence_score).detach().item(),
-        'critic/score/max':
-            torch.max(sequence_score).detach().item(),
-        'critic/score/min':
-            torch.min(sequence_score).detach().item(),
-        # reward
-        'critic/rewards/mean':
-            torch.mean(sequence_reward).detach().item(),
-        'critic/rewards/max':
-            torch.max(sequence_reward).detach().item(),
-        'critic/rewards/min':
-            torch.min(sequence_reward).detach().item(),
-        # adv
-        'critic/advantages/mean':
-            torch.mean(valid_adv).detach().item(),
-        'critic/advantages/max':
-            torch.max(valid_adv).detach().item(),
-        'critic/advantages/min':
-            torch.min(valid_adv).detach().item(),
-        # returns
-        'critic/returns/mean':
-            torch.mean(valid_returns).detach().item(),
-        'critic/returns/max':
-            torch.max(valid_returns).detach().item(),
-        'critic/returns/min':
-            torch.min(valid_returns).detach().item(),
-        **({
-            # values
-            'critic/values/mean': torch.mean(valid_values).detach().item(),
-            'critic/values/max': torch.max(valid_values).detach().item(),
-            'critic/values/min': torch.min(valid_values).detach().item(),
-            # vf explained var
-            'critic/vf_explained_var': (1.0 - return_diff_var / (return_var + 1e-5)).detach().item(),
-        } if use_critic else {}),
-
-        # response length
-        'response_length/mean':
-            torch.mean(response_length).detach().item(),
-        'response_length/max':
-            torch.max(response_length).detach().item(),
-        'response_length/min':
-            torch.min(response_length).detach().item(),
-        'response_length/clip_ratio':
-            torch.mean(torch.eq(response_length, max_response_length).float()).detach().item(),
-        # prompt length
-        'prompt_length/mean':
-            torch.mean(prompt_length).detach().item(),
-        'prompt_length/max':
-            torch.max(prompt_length).detach().item(),
-        'prompt_length/min':
-            torch.min(prompt_length).detach().item(),
-        'prompt_length/clip_ratio':
-            torch.mean(torch.eq(prompt_length, max_prompt_length).float()).detach().item(),
-    }
-    return metrics
-
-
-def compute_timing_metrics(batch, timing_raw):
-    response_info = _compute_response_info(batch)
-    num_prompt_tokens = torch.sum(response_info['prompt_length']).item()
-    num_response_tokens = torch.sum(response_info['response_length']).item()
-    num_overall_tokens = num_prompt_tokens + num_response_tokens
-
-    num_tokens_of_section = {
-        'gen': num_response_tokens,
-        **{
-            name: num_overall_tokens for name in ['ref', 'values', 'adv', 'update_critic', 'update_actor']
-        },
-    }
-
-    return {
-        **{
-            f'timing_s/{name}': value for name, value in timing_raw.items()
-        },
-        **{
-            f'timing_per_token_ms/{name}': timing_raw[name] * 1000 / num_tokens_of_section[name] for name in set(num_tokens_of_section.keys(
-            )) & set(timing_raw.keys())
-        },
-    }
 
 def split_batch(batch: dict, num_splits: int) -> list[dict]:
     splits = [{} for _ in range(num_splits)]
@@ -592,8 +486,8 @@ class RayPPOTrainer(object):
         self.validation_table = new_table
 
     def _validate(self):
-        reward_tensor_lst = []
         data_source_lst = []
+        reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
         # Lists to collect samples for the table
         sample_inputs = []
@@ -609,6 +503,7 @@ class RayPPOTrainer(object):
 
             # Store original inputs
             input_ids = test_batch.batch['input_ids']
+            # TODO: Can we keep special tokens except for padding tokens?
             input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
             sample_inputs.extend(input_texts)
 
@@ -620,6 +515,7 @@ class RayPPOTrainer(object):
                 'do_sample': False,
                 'validate': True,
             }
+            print(f'test_gen_batch meta info: {test_gen_batch.meta_info}')
 
             # pad to be divisible by dp_size
             test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, self.actor_rollout_wg.world_size)
@@ -636,33 +532,89 @@ class RayPPOTrainer(object):
             test_batch = test_batch.union(test_output_gen_batch)
 
             # evaluate using reward_function
-            reward_tensor = self.val_reward_fn(test_batch)
+            result = self.val_reward_fn(test_batch, return_dict=True)
+            reward_tensor = result["reward_tensor"]
+            if "reward_extra_info" in result:
+                for key, lst in result["reward_extra_info"].items():
+                    reward_extra_infos_dict[key].extend(lst)
 
             # Store scores
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
 
-            reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
 
         self._maybe_log_val_generations_to_wandb(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
-        reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)
+
+        for lst in reward_extra_infos_dict.values():
+            assert len(lst) == 0 or len(lst) == len(sample_scores)
+
         data_sources = np.concatenate(data_source_lst, axis=0)
 
-        # evaluate test_score based on data source
-        data_source_reward = {}
-        for i in range(reward_tensor.shape[0]):
-            data_source = data_sources[i]
-            if data_source not in data_source_reward:
-                data_source_reward[data_source] = []
-            data_source_reward[data_source].append(reward_tensor[i].item())
+        data_src2prompt2var2vals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        for sample_idx, data_source in enumerate(data_sources):
+            prompt = sample_inputs[sample_idx]
+
+            var2vals = data_src2prompt2var2vals[data_source][prompt]
+            var2vals["final_reward"].append(sample_scores[sample_idx])
+            for metric_name, metric_vals in reward_extra_infos_dict.items():
+                var2vals[metric_name].append(metric_vals[sample_idx])
+
+        data_src2prompt2var2metric = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+        for data_source, prompt2var2vals in data_src2prompt2var2vals.items():
+            for prompt, var2vals in prompt2var2vals.items():
+                n_resps = len(var2vals["final_reward"])
+                preds = var2vals["pred"]
+                for var_name, var_vals in var2vals.items():
+                    if var_name in ["pred", "final_reward"]:
+                        continue
+                    metric = {}
+
+                    metric[f"mean@{n_resps}"] = np.mean(var_vals)
+                    metric[f"std@{n_resps}"] = np.std(var_vals)
+
+                    ns = []
+                    n = 2
+                    while n < n_resps:
+                        ns.append(n)
+                        n *= 2
+                    ns.append(n_resps)
+
+                    data = [{"val": val, "pred": pred} for val, pred in zip(var_vals, preds)]
+                    for n in ns:
+
+                        (bon_mean, bon_std), (won_mean, won_std), (maj_n_mean, maj_n_std) = bootstrap_metric(
+                            data,
+                            subset_size=n,
+                            reduce_fns=[
+                                lambda arr: np.max([d["val"] for d in arr]),
+                                lambda arr: np.min([d["val"] for d in arr]),
+                                partial(calc_maj_val, vote_key="pred", val_key="val")
+                            ])
+                        metric[f"best@{n}/mean"], metric[f"best@{n}/std"] = bon_mean, bon_std
+                        metric[f"worst@{n}/mean"], metric[f"worst@{n}/std"] = won_mean, won_std
+                        metric[f"maj@{n}/mean"], metric[f"maj@{n}/std"] = maj_n_mean, maj_n_std
+
+                    data_src2prompt2var2metric[data_source][prompt][var_name] = metric
+
+        data_src2var2metric2prompt_vals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        for data_source, prompt2var2metric in data_src2prompt2var2metric.items():
+            for prompt, var2metric in prompt2var2metric.items():
+                for var_name, metric in var2metric.items():
+                    for metric_name, metric_val in metric.items():
+                        data_src2var2metric2prompt_vals[data_source][var_name][metric_name].append(metric_val)
 
         metric_dict = {}
-        for data_source, rewards in data_source_reward.items():
-            metric_dict[f'val/test_score/{data_source}'] = np.mean(rewards)
+        for data_source, var2metric2prompt_vals in data_src2var2metric2prompt_vals.items():
+            for var_name, metric2prompt_vals in var2metric2prompt_vals.items():
+                for metric_name, prompt_vals in metric2prompt_vals.items():
+                    pfx = f"{data_source}/{var_name}/{metric_name}"
+                    metric_dict[pfx] = np.mean(prompt_vals)
 
-        return metric_dict
+        val_metric_dict = {f"val/{key}": value for key, value in metric_dict.items()}
+        return val_metric_dict
+    
 
     def init_workers(self):
         """Init resource pool and worker group"""
@@ -978,8 +930,20 @@ class RayPPOTrainer(object):
                                 batch = batch.union(reward_tensor)
 
                             # we combine with rule-based rm
-                            reward_tensor = self.reward_fn(batch)
+                            reward_extra_infos_dict: dict[str, list]
+                            try:
+                                reward_result = self.reward_fn(batch, return_dict=True)
+                                reward_tensor = reward_result['reward_tensor']
+                                reward_extra_infos_dict = reward_result['reward_extra_info']
+                            except Exception as e:
+                                print(f'Error in reward_fn: {e}')
+                                reward_tensor = self.reward_fn(batch)
+                                reward_extra_infos_dict = {}
+
                             batch.batch['token_level_scores'] = reward_tensor
+
+                            print(f'{list(reward_extra_infos_dict.keys())=}')
+
 
                             # compute rewards. apply_kl_penalty if available
                             if not self.config.actor_rollout_ref.actor.get('use_kl_loss', False):
@@ -1025,6 +989,10 @@ class RayPPOTrainer(object):
                                 self._save_checkpoint()
 
                     # collect metrics
+                    if reward_extra_infos_dict:
+                        batch.non_tensor_batch.update({
+                            k: np.array(v) for k, v in reward_extra_infos_dict.items()
+                        })
                     metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                     metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
 

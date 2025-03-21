@@ -268,6 +268,10 @@ class MegatronPPOActor(BasePPOActor):
             clip_ratio = meta_info['clip_ratio']
             entropy_coeff = meta_info['entropy_coeff']
 
+            clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
+            clip_ratio_high = self.config.clip_ratio_high if self.config.clip_ratio_high is not None else clip_ratio
+            use_token_level_loss = self.config.get('use_token_level_loss', False)
+
             # compute policy loss
             logits = output.logits
             logits = logits[:, -response_length - 1:-1]
@@ -276,7 +280,10 @@ class MegatronPPOActor(BasePPOActor):
                                                                           log_prob=log_prob,
                                                                           advantages=advantages,
                                                                           eos_mask=response_mask,
-                                                                          cliprange=clip_ratio)
+                                                                          cliprange=clip_ratio,
+                                                                          cliprange_low=clip_ratio_low,
+                                                                          cliprange_high=clip_ratio_high,
+                                                                          use_token_level_loss=use_token_level_loss)
             entropy_loss = vocab_parallel_compute_entropy_loss(logits, eos_mask=response_mask)
             policy_loss = pg_loss - entropy_loss * entropy_coeff
             # return loss and stats
@@ -330,6 +337,13 @@ class MegatronPPOActor(BasePPOActor):
             )
         # loss_reduces contains the stats returned from loss_func
         return losses_reduced
+    
+    def get_module_grad_norm(self):
+        """Get the grad norm of the actor module"""
+        ret = 0
+        for m in self.actor_module:
+            ret += sum(p.grad.norm().item() for p in m.parameters() if p.grad is not None)
+        return ret
 
     def update_policy(self, dataloader: Iterable[DataProto]) -> Dict:
         """Update the policy with an iterator of DataProto
@@ -358,6 +372,8 @@ class MegatronPPOActor(BasePPOActor):
 
             update_successful, grad_norm, num_zeros_in_grad = self.actor_optimizer.step(
                 self.megatron_config, self.megatron_config.timers)
+            print(f"grad_norm: {grad_norm}")
+            metrics['actor/grad_norm'] = grad_norm
             if update_successful:
                 # allgather already execute in optimizer.step in new megatron
                 pass
