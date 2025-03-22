@@ -344,6 +344,7 @@ class MegatronPPOActor(BasePPOActor):
 
         """
         metrics = {}
+        metrics['actor/grad_norm'] = []
         for data in dataloader:
             # data = data.batch.to(self.actor_module.device)
             self.actor_optimizer.zero_grad()
@@ -358,12 +359,13 @@ class MegatronPPOActor(BasePPOActor):
 
             update_successful, grad_norm, num_zeros_in_grad = self.actor_optimizer.step(
                 self.megatron_config, self.megatron_config.timers)
+            metrics['actor/grad_norm'].append(grad_norm)
             if update_successful:
                 # allgather already execute in optimizer.step in new megatron
                 pass
             else:
                 raise NotImplementedError
-
+        metrics['actor/grad_norm'] = torch.stack(metrics['actor/grad_norm']).mean().item()
         # add empty cache after each compute
         torch.cuda.empty_cache()
 

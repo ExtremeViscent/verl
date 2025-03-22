@@ -1,9 +1,9 @@
 DATA_DIR=$HOME/data/kk
 
 TP_SIZE=8
-PP_SIZE=4
+PP_SIZE=2
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=True
+GROUP_SHUFFLE=False
 BASE_MODEL=meta-llama/Llama-3.1-8B-Instruct
 
 ray job submit --address="http://localhost:8265" \
@@ -33,8 +33,8 @@ ray job submit --address="http://localhost:8265" \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.temperature=1 \
     +actor_rollout_ref.rollout.group_shuffle=$GROUP_SHUFFLE \
-    +actor_rollout_ref.rollout.n_groups=8 \
-    +actor_rollout_ref.rollout.oversubscribe=True \
+    +actor_rollout_ref.rollout.n_groups=4 \
+    +actor_rollout_ref.rollout.oversubscribe=False \
     +actor_rollout_ref.rollout.n_over=4 \
     +actor_rollout_ref.rollout.ctrl_len=False \
     actor_rollout_ref.rollout.n=8 \
@@ -48,7 +48,7 @@ ray job submit --address="http://localhost:8265" \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_sglang_logicrl' \
-    trainer.experiment_name=Oversub-4 \
+    trainer.experiment_name=pp-2-orig \
     +trainer.val_before_train=False \
     +trainer.remove_previous_ckpt_in_save=True \
     trainer.default_hdfs_dir=null \
