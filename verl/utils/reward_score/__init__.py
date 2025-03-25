@@ -41,6 +41,9 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
     elif data_source in ['hiyouga/geometry3k']:
         from . import geo3k
         res = geo3k.compute_score(solution_str, ground_truth)
+    elif data_source in ['kk_logic']:
+        from . import kk
+        res = kk.compute_score(solution_str, ground_truth)
     else:
         raise NotImplementedError
 

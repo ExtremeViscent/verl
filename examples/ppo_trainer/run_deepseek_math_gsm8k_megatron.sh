@@ -7,7 +7,9 @@ gsm8k_test_path=$HOME/data/gsm8k/test.parquet
 train_files="['$gsm8k_train_path']"
 test_files="['$gsm8k_test_path']"
 
-python3 -m verl.trainer.main_ppo --config-path=./config --config-name='ppo_trainer'\
+ray job submit --address="http://localhost:8265" \
+  --runtime-env-json='{"working_dir": "./"}' \
+  -- python3 -m verl.trainer.main_ppo --config-path=./config --config-name='ppo_trainer'\
     data.train_files="$train_files" \
     data.val_files="$test_files" \
     data.train_batch_size=256 \
@@ -25,13 +27,17 @@ python3 -m verl.trainer.main_ppo --config-path=./config --config-name='ppo_train
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.do_sample=True \
+    +actor_rollout_ref.rollout.group_shuffle=True \
+    +actor_rollout_ref.rollout.n_groups=4 \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
     algorithm.kl_ctrl.kl_coef=0.001 \
     algorithm.adv_estimator=grpo \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_fsdp_gsm8k_examples' \
     trainer.experiment_name='qwen2_5_3b_function_rm' \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=8 \
+    +trainer.val_before_train=False \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=5 \

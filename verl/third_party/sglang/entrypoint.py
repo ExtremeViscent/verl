@@ -1,7 +1,7 @@
 import asyncio
 from typing import AsyncIterator, Dict, List, Optional, Union
 import uuid
-from dev.sglang.python.sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.entrypoints.verl_engine import VerlEngine as VerlEngineBase
 from sglang.srt.server import Engine
 from sglang.srt.utils import broadcast_pyobj
@@ -13,8 +13,8 @@ import torch.distributed as dist
 from torch.distributed.tensor import DeviceMesh, DTensor
 
 
-async def get_first_n_results(tasks, all_rids, num_returns):
-    grouped = '_nid' in all_rids[0]
+async def get_first_n_results(tasks, all_rids, num_returns, n=1):
+    grouped = n > 1
     results = []
     incomplete_rids = set()
     completed_rids = set()
@@ -34,7 +34,7 @@ async def get_first_n_results(tasks, all_rids, num_returns):
             if len(partial_results[original_rid]) == n:
                 results.extend(partial_results[original_rid])
                 del partial_results[original_rid]
-                if len(results) == num_returns:
+                if len(results) == num_returns * n:
                     incomplete_rids = set(all_rids) - completed_rids
                     return results, incomplete_rids
     else:
@@ -55,7 +55,7 @@ class CustomEngine(Engine):
     def custom_generate(
         self,
         # The input prompt. It can be a single prompt or a batch of prompts.
-        prompts: Optional[List[str]] = None,
+        prompt: Optional[List[str]] = None,
         sampling_params: Optional[Union[List[Dict], Dict]] = None,
         # The token ids for text; one can either specify text or input_ids.
         input_ids: Optional[Union[List[List[int]], List[int]]] = None,
@@ -84,8 +84,8 @@ class CustomEngine(Engine):
         
         try:
             batch_size = 0
-            if prompts is not None:
-                batch_size = len(prompts)
+            if prompt is not None:
+                batch_size = len(prompt)
             if input_ids is not None:
                 batch_size = len(input_ids)
 
@@ -99,11 +99,12 @@ class CustomEngine(Engine):
 
             # Convert when n>1
             n = sampling_params.get("n", 1) if sampling_params is not None else 1
+            sampling_params_ = sampling_params.copy()
             if n > 1:
                 all_rids = []
                 for i in range(batch_size):
                     all_rids.extend([original_rids[i]+f'_nid{j}' for j in range(n)])
-                sampling_params['n'] = 1
+                sampling_params_['n'] = 1
             else:
                 all_rids = original_rids
 
@@ -115,9 +116,9 @@ class CustomEngine(Engine):
                 for j in range(n):
                     # Create a single-prompt request with a single rid
                     single_obj = GenerateReqInput(
-                        text=prompts[i] if prompts is not None else None,
+                        text=prompt[i] if prompt is not None else None,
                         input_ids=[input_ids[i]] if input_ids is not None else None,
-                        sampling_params=sampling_params,
+                        sampling_params=sampling_params_,
                         image_data=image_data[i] if image_data is not None else None,
                         return_logprob=return_logprob,
                         logprob_start_len=logprob_start_len,
@@ -137,18 +138,23 @@ class CustomEngine(Engine):
                 
             # Wait for the first num_return_seqs tasks to complete
             num_returns = min(num_returns, batch_size)  # Don't try to get more results than prompts
-            results, incomplete_rids = loop.run_until_complete(get_first_n_results(all_tasks, all_rids, num_returns))
-            
+            results, incomplete_rids = loop.run_until_complete(get_first_n_results(all_tasks, all_rids, num_returns, n))
+            print(f'results: {len(results)}')
+            print(f'num_returns: {num_returns}')
+            print(f'n: {n}')
+            print(f'incomplete_rids: {len(incomplete_rids)}')
             # Abort the incomplete requests
             for rid in incomplete_rids:
                 self.tokenizer_manager.abort_request(rid)
                 rid_to_task[rid].cancel()
             
             # Map incomplete rid to original rid
-            incomplete_original_rids = set()
-            for rid in incomplete_rids:
-                incomplete_original_rids.add(rid.split('_nid')[0])
-            return results, incomplete_original_rids
+            completed_original_rids = []
+            for i in range(num_returns):
+                j = i*n
+                completed_original_rids.append(results[j]['meta_info']['id'].split('_nid')[0])
+            incomplete_original_rids = set(original_rids) - set(completed_original_rids)
+            return results, completed_original_rids, incomplete_original_rids
         finally:
             # Only close the loop if we created it
             if created_loop:
@@ -198,6 +204,7 @@ class VerlEngine(VerlEngineBase):
         lora_path: Optional[List[Optional[str]]] = None,
         custom_logit_processor: Optional[Union[List[str], str]] = None,
         num_returns: Optional[int] = None,
+        rid: Optional[Union[List[str], str]] = None,
     ):
         if self._tp_rank == 0:
             if num_returns is None:
@@ -213,9 +220,10 @@ class VerlEngine(VerlEngineBase):
                     lora_path=lora_path,
                     custom_logit_processor=custom_logit_processor,
                 )
+                completed_original_rids = None
                 incomplete_original_rids = None
             else:
-                output, incomplete_original_rids = self._engine.custom_generate(
+                output, completed_original_rids, incomplete_original_rids = self._engine.custom_generate(
                     prompt=prompt,
                     sampling_params=sampling_params,
                     input_ids=input_ids,
@@ -227,9 +235,11 @@ class VerlEngine(VerlEngineBase):
                     lora_path=lora_path,
                     custom_logit_processor=custom_logit_processor,
                     num_returns=num_returns,
+                    rid=rid,
                 )
         else:
             output = None
+            completed_original_rids = None
             incomplete_original_rids = None
 
         # Most naive implementation, can extract tensor and send via gloo if too slow
@@ -246,5 +256,14 @@ class VerlEngine(VerlEngineBase):
                 dist_group=self._device_mesh_cpu.get_group(),
                 src=self._device_mesh_cpu.mesh[0].item(),
             )
+            [completed_original_rids] = broadcast_pyobj(
+                data=[completed_original_rids],
+                rank=self._tp_rank,
+                dist_group=self._device_mesh_cpu.get_group(),
+                src=self._device_mesh_cpu.mesh[0].item(),
+            )
 
-        return output, incomplete_original_rids if num_returns is not None else output
+        if num_returns is not None:
+            return output, completed_original_rids, incomplete_original_rids
+        else:
+            return output

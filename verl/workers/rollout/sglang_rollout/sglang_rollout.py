@@ -29,12 +29,14 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List
+from uuid import uuid4
 from omegaconf import DictConfig
 from tensordict import TensorDict
 from verl import DataProto
 from verl.workers.rollout.base import BaseRollout
 from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length, pad_2d_list_to_length
-from sglang.srt.entrypoints.verl_engine import VerlEngine
+# from sglang.srt.entrypoints.verl_engine import VerlEngine
+from verl.third_party.sglang.entrypoint import VerlEngine
 from torch.distributed.device_mesh import init_device_mesh
 from sglang.srt.sampling.sampling_params import SamplingParams
 from verl.third_party.sglang import parallel_state as sglang_ps
@@ -164,7 +166,8 @@ class SGLangRollout(BaseRollout):
                       max_new_tokens=config.response_length,
                       presence_penalty=0.0,
                       frequency_penalty=0.0,
-                      repetition_penalty=1.0)
+                      repetition_penalty=1.0,
+                      min_new_tokens=1)
         # supporting adding any sampling params from the config file
         for k in config.keys():
             if hasattr(SamplingParams(), str(k)):
@@ -227,8 +230,8 @@ class SGLangRollout(BaseRollout):
                 top_p=1,
                 top_k=-1,
                 ignore_eos=False,
-                min_new_tokens=0,
-                max_new_tokens=4096,
+                min_new_tokens=1,
+                max_new_tokens=self.config.response_length,
                 skip_special_tokens=True,
                 spaces_between_special_tokens=True,
             )
@@ -286,5 +289,150 @@ class SGLangRollout(BaseRollout):
         # free cache engine
         if self.config.free_cache_engine and self.inference_engine._engine is not None:
             self.inference_engine._engine.tokenizer_manager.flush_cache()
+
+        return DataProto(batch=batch)
+
+    @torch.no_grad()
+    def feed_group_cache(self, prompts: DataProto, **kwargs):
+        self.group_iter = 0
+        self.group_cache = {}
+        idx = prompts.batch['input_ids']
+        attention_mask = prompts.batch['attention_mask']
+        position_ids = prompts.batch['position_ids']
+        gids = prompts.batch['gids']
+        bsz = prompts.batch['input_ids'].size(0)
+
+        for i in range(bsz):
+            idx = prompts.batch['input_ids'][i]
+            attention_mask = prompts.batch['attention_mask'][i]
+            position_ids = prompts.batch['position_ids'][i]
+            idx_ = _pre_process_inputs(self.pad_token_id, idx)
+            gid = gids[i]
+            rid = f"req_{i}_{gid}"
+            self.group_cache[rid] = {
+                'idx': idx,
+                'processed_idx': idx_,
+                'attention_mask': attention_mask,
+                'position_ids': position_ids,
+                'gid': gid
+            }
+        self.group_meta = prompts.meta_info
+        if prompts.meta_info.get('group_shuffle', False):
+            n_groups = prompts.meta_info['n_groups']
+            self.mini_bsz = bsz // n_groups
+        elif prompts.meta_info.get('oversubscribe', False):
+            n_over = prompts.meta_info['n_over']
+            self.mini_bsz = bsz // n_over
+            
+    @torch.no_grad()
+    def generate_sequences_ingroup(self, **kwargs) -> DataProto:
+        # if self.config.free_cache_engine:
+        batch_size = min(self.mini_bsz, len(self.group_cache))
+        idx_list = []
+        rids = []
+        idx = []
+        attention_mask = []
+        position_ids = []
+        gids = []
+        new_group_cache = {}
+        for i, (rid, v) in enumerate(self.group_cache.items()):
+            idx_list.append(v['processed_idx'])
+            rids.append(rid)
+        do_sample = self.group_meta.get('do_sample', True)
+        eos_token_id = self.group_meta['eos_token_id']
+
+        if not do_sample:
+            # kwargs = {
+            #     'top_p': 1.0,
+            #     'top_k': -1,
+            #     'min_p': 0.0,
+            #     'temperature': 0,
+            #     'n': 1  # if greedy, only 1 response
+            # }
+            kwargs = dict(
+                n=1,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                repetition_penalty=1.0,
+                temperature=0,
+                top_p=1,
+                top_k=-1,
+                ignore_eos=False,
+                min_new_tokens=1,
+                max_new_tokens=self.config.response_length,
+                skip_special_tokens=True,
+                spaces_between_special_tokens=True,
+            )
+        # users can customize different sampling_params at different run
+        with self.update_sampling_params(**kwargs):
+            print(f"{self.sampling_params=}")
+            output, completed_rids, incomplete_rids = self.inference_engine.generate(
+                prompt=None,  # because we have already convert it to prompt token id
+                sampling_params=self.sampling_params,
+                return_logprob=True,
+                input_ids=idx_list,
+                rid=rids,
+                num_returns=batch_size,
+            )
+            for rid in completed_rids:
+                idx.append(self.group_cache[rid]['idx'])
+                attention_mask.append(self.group_cache[rid]['attention_mask'])
+                position_ids.append(self.group_cache[rid]['position_ids'])
+                gids.append(self.group_cache[rid]['gid'])
+            device_ = idx[0].device
+            idx = torch.stack(idx, dim=0).to(device_)
+            attention_mask = torch.stack(attention_mask, dim=0)
+            position_ids = torch.stack(position_ids, dim=0)
+            gids = torch.stack(gids, dim=0).cpu()
+            self.group_cache = {rid: self.group_cache[rid] for rid in incomplete_rids}
+                
+        out = _post_process_outputs(self.tokenizer, output)
+
+        response = out[0].to(idx.device)
+        log_probs = out[1].to(idx.device)
+
+        if response.shape[1] < self.config.response_length:
+            response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
+            log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
+        if self.config.n > 1 and do_sample:
+            idx = idx.repeat_interleave(self.config.n, dim=0)
+            attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
+            position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
+            gids = gids.repeat_interleave(self.config.n, dim=0)
+            batch_size = batch_size * self.config.n
+        seq = torch.cat([idx, response], dim=-1)
+
+        response_length = response.size(1)
+        delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
+        delta_position_id = delta_position_id.unsqueeze(0).repeat(batch_size, 1)
+
+        # TODO(sgm): fix position_ids on right_pad
+        # prompt: left pad + response: right pad
+        # attention_mask: [0,0,0,0,1,1,1,1, | 1,1,1,0,0,0,0,0]
+        # position_ids:   [0,0,0,0,0,1,2,3, | 4,5,6,7,8,9,10,11]
+        response_position_ids = position_ids[:, -1:] + delta_position_id
+        position_ids = torch.cat([position_ids, response_position_ids], dim=-1)
+        response_attention_mask = get_eos_mask(response_id=response, eos_token=eos_token_id, dtype=attention_mask.dtype)
+        attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
+
+        # all the tp ranks should contain the same data here. data in all ranks are valid
+        batch = TensorDict(
+            {
+                "prompts": idx,
+                "responses": response,
+                "input_ids": seq,  # here input_ids become the whole sentences
+                # 'old_log_probs': log_probs, # we will recompute old log prob with actor
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+                "gids": gids,
+            },
+            batch_size=batch_size,
+        )
+
+        # free cache engine
+        if self.config.free_cache_engine and self.inference_engine._engine is not None:
+            self.inference_engine._engine.tokenizer_manager.flush_cache()
+
+        self.group_iter += 1
 
         return DataProto(batch=batch)

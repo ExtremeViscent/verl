@@ -16,6 +16,7 @@ FSDP PPO Trainer with Ray-based single controller.
 This trainer supports model-agonistic model initialization with huggingface
 """
 
+from math import ceil
 import os
 import uuid
 from contextlib import contextmanager
@@ -31,6 +32,7 @@ import numpy as np
 from codetiming import Timer
 from omegaconf import OmegaConf, open_dict
 from verl import DataProto
+from verl.protocol import collate_fn as batch_collate_fn
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayResourcePool, RayWorkerGroup, RayClassWithInitArgs
@@ -404,6 +406,16 @@ class RayPPOTrainer(object):
 
     def _create_dataloader(self):
         # TODO: we have to make sure the batch size is divisible by the dp size
+
+        macro_batch_size = self.config.data.train_batch_size
+        if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+            if getattr(self.config.actor_rollout_ref.rollout, 'ctrl_len', False):
+                macro_batch_size = macro_batch_size * (self.config.actor_rollout_ref.rollout.n_groups+1)
+            else:
+                macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_groups
+        elif getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+            macro_batch_size = macro_batch_size * self.config.actor_rollout_ref.rollout.n_over
+
         self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
                                          tokenizer=self.tokenizer,
                                          processor=self.processor,
@@ -426,7 +438,7 @@ class RayPPOTrainer(object):
             sampler = SequentialSampler(data_source=self.train_dataset)
 
         self.train_dataloader = StatefulDataLoader(dataset=self.train_dataset,
-                                                   batch_size=self.config.data.train_batch_size,
+                                                   batch_size=macro_batch_size,
                                                    num_workers=8,
                                                    drop_last=True,
                                                    collate_fn=collate_fn,
@@ -797,151 +809,165 @@ class RayPPOTrainer(object):
         last_val_metrics = None
 
         for epoch in range(self.config.trainer.total_epochs):
-            for batch_dict in self.train_dataloader:
+            for macro_batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
 
-                batch: DataProto = DataProto.from_single_dict(batch_dict)
+                macro_batch: DataProto = DataProto.from_single_dict(macro_batch_dict)
 
                 # pop those keys for generation
-                if 'multi_modal_inputs' in batch.non_tensor_batch.keys():
-                    gen_batch = batch.pop(
+                if 'multi_modal_inputs' in macro_batch.non_tensor_batch.keys():
+                    macro_gen_batch = macro_batch.pop(
                         batch_keys=['input_ids', 'attention_mask', 'position_ids'],
                         non_tensor_batch_keys=['raw_prompt_ids', 'multi_modal_data', 'multi_modal_inputs'],
                     )
                 else:
-                    gen_batch = batch.pop(
+                    macro_gen_batch = macro_batch.pop(
                         batch_keys=['input_ids', 'attention_mask', 'position_ids'],
                         non_tensor_batch_keys=['raw_prompt_ids'],
                     )
 
-                is_last_step = self.global_steps >= self.total_training_steps
+                if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+                    gids = torch.arange(macro_gen_batch.batch['input_ids'].size(0))
+                    macro_gen_batch.batch['gids'] = gids
+                    n_groups = self.config.actor_rollout_ref.rollout.get('n_groups', 4)
+                    macro_gen_batch.meta_info['n_groups'] = n_groups
+                    macro_gen_batch.meta_info['group_shuffle'] = True
+                    n_iter = min(n_groups, ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size))
+                    self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
+                elif getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+                    n_iter = 1
+                    gids = torch.arange(macro_gen_batch.batch['input_ids'].size(0))
+                    macro_gen_batch.batch['gids'] = gids
+                    macro_gen_batch.meta_info['oversubscribe'] = True
+                    macro_gen_batch.meta_info['n_over'] = self.config.actor_rollout_ref.rollout.get('n_over', 2)
+                    self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
+                else:
+                    batch = macro_batch
+                    gen_batch = macro_gen_batch
+                    n_iter = 1
+                for k in range(n_iter):
+                    is_last_step = self.global_steps >= self.total_training_steps
 
-                with _timer('step', timing_raw):
-                    # generate a batch
-                    with _timer('gen', timing_raw):
-                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                    with _timer('step', timing_raw):
+                        # generate a batch
+                        with _timer('gen', timing_raw):
+                            if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) \
+                                or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
+                                gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
+                                batch = []
+                                stride = self.config.actor_rollout_ref.rollout.n
+                                for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
+                                    gid = gen_batch_output.batch['gids'][i]
+                                    batch.append(macro_batch[gid])
+                                batch = batch_collate_fn(batch)
+                            else:
+                                gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
 
-                    if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
-                        with _timer('gen_max', timing_raw):
-                            gen_baseline_batch = deepcopy(gen_batch)
-                            gen_baseline_batch.meta_info['do_sample'] = False
-                            gen_baseline_output = self.actor_rollout_wg.generate_sequences(gen_baseline_batch)
+                        batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
+                                                                dtype=object)
+                        # repeat to align with repeated responses in rollout
+                        batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
+                        batch = batch.union(gen_batch_output)
 
-                            batch = batch.union(gen_baseline_output)
-                            reward_baseline_tensor = self.reward_fn(batch)
-                            reward_baseline_tensor = reward_baseline_tensor.sum(dim=-1)
+                        # balance the number of valid tokens on each dp rank.
+                        # Note that this breaks the order of data inside the batch.
+                        # Please take care when you implement group based adv computation such as GRPO and rloo
+                        if self.config.trainer.balance_batch:
+                            self._balance_batch(batch, metrics=metrics)
 
-                            batch.pop(batch_keys=list(gen_baseline_output.batch.keys()))
+                        # compute global_valid tokens
+                        batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
 
-                            batch.batch['reward_baselines'] = reward_baseline_tensor
+                        # recompute old_log_probs
+                        with _timer('old_log_prob', timing_raw):
+                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                            batch = batch.union(old_log_prob)
 
-                            del gen_baseline_batch, gen_baseline_output
+                        if self.use_reference_policy:
+                            # compute reference log_prob
+                            with _timer('ref', timing_raw):
+                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+                                batch = batch.union(ref_log_prob)
 
-                    batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
-                                                             dtype=object)
-                    # repeat to align with repeated responses in rollout
-                    batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
-                    batch = batch.union(gen_batch_output)
+                        # compute values
+                        if self.use_critic:
+                            with _timer('values', timing_raw):
+                                values = self.critic_wg.compute_values(batch)
+                                batch = batch.union(values)
 
-                    # balance the number of valid tokens on each dp rank.
-                    # Note that this breaks the order of data inside the batch.
-                    # Please take care when you implement group based adv computation such as GRPO and rloo
-                    if self.config.trainer.balance_batch:
-                        self._balance_batch(batch, metrics=metrics)
+                        with _timer('adv', timing_raw):
+                            # compute scores. Support both model and function-based.
+                            # We first compute the scores using reward model. Then, we call reward_fn to combine
+                            # the results from reward model and rule-based results.
+                            if self.use_rm:
+                                # we first compute reward model score
+                                reward_tensor = self.rm_wg.compute_rm_score(batch)
+                                batch = batch.union(reward_tensor)
 
-                    # compute global_valid tokens
-                    batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
+                            # we combine with rule-based rm
+                            reward_tensor = self.reward_fn(batch)
+                            batch.batch['token_level_scores'] = reward_tensor
 
-                    # recompute old_log_probs
-                    with _timer('old_log_prob', timing_raw):
-                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                        batch = batch.union(old_log_prob)
+                            # compute rewards. apply_kl_penalty if available
+                            if not self.config.actor_rollout_ref.actor.get('use_kl_loss', False):
+                                batch, kl_metrics = apply_kl_penalty(batch,
+                                                                    kl_ctrl=self.kl_ctrl,
+                                                                    kl_penalty=self.config.algorithm.kl_penalty)
+                                metrics.update(kl_metrics)
+                            else:
+                                batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
 
-                    if self.use_reference_policy:
-                        # compute reference log_prob
-                        with _timer('ref', timing_raw):
-                            ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                            batch = batch.union(ref_log_prob)
+                            # compute advantages, executed on the driver process
+                            batch = compute_advantage(batch,
+                                                    adv_estimator=self.config.algorithm.adv_estimator,
+                                                    gamma=self.config.algorithm.gamma,
+                                                    lam=self.config.algorithm.lam,
+                                                    num_repeat=self.config.actor_rollout_ref.rollout.n)
 
-                    # compute values
-                    if self.use_critic:
-                        with _timer('values', timing_raw):
-                            values = self.critic_wg.compute_values(batch)
-                            batch = batch.union(values)
+                        # update critic
+                        if self.use_critic:
+                            with _timer('update_critic', timing_raw):
+                                critic_output = self.critic_wg.update_critic(batch)
+                            critic_output_metrics = reduce_metrics(critic_output.meta_info['metrics'])
+                            metrics.update(critic_output_metrics)
 
-                    with _timer('adv', timing_raw):
-                        # compute scores. Support both model and function-based.
-                        # We first compute the scores using reward model. Then, we call reward_fn to combine
-                        # the results from reward model and rule-based results.
-                        if self.use_rm:
-                            # we first compute reward model score
-                            reward_tensor = self.rm_wg.compute_rm_score(batch)
-                            batch = batch.union(reward_tensor)
+                        # implement critic warmup
+                        if self.config.trainer.critic_warmup <= self.global_steps:
+                            # update actor
+                            with _timer('update_actor', timing_raw):
+                                actor_output = self.actor_rollout_wg.update_actor(batch)
+                            actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
+                            metrics.update(actor_output_metrics)
 
-                        # we combine with rule-based rm
-                        reward_tensor = self.reward_fn(batch)
-                        batch.batch['token_level_scores'] = reward_tensor
+                        # validate
+                        if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and \
+                            (is_last_step or  self.global_steps % self.config.trainer.test_freq == 0):
+                            with _timer('testing', timing_raw):
+                                val_metrics: dict = self._validate()
+                                if is_last_step:
+                                    last_val_metrics = val_metrics
+                            metrics.update(val_metrics)
 
-                        # compute rewards. apply_kl_penalty if available
-                        if not self.config.actor_rollout_ref.actor.get('use_kl_loss', False):
-                            batch, kl_metrics = apply_kl_penalty(batch,
-                                                                 kl_ctrl=self.kl_ctrl,
-                                                                 kl_penalty=self.config.algorithm.kl_penalty)
-                            metrics.update(kl_metrics)
-                        else:
-                            batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
+                        if self.config.trainer.save_freq > 0 and ( is_last_step or \
+                                self.global_steps % self.config.trainer.save_freq == 0):
+                            with _timer('save_checkpoint', timing_raw):
+                                self._save_checkpoint()
 
-                        # compute advantages, executed on the driver process
-                        batch = compute_advantage(batch,
-                                                  adv_estimator=self.config.algorithm.adv_estimator,
-                                                  gamma=self.config.algorithm.gamma,
-                                                  lam=self.config.algorithm.lam,
-                                                  num_repeat=self.config.actor_rollout_ref.rollout.n)
+                    # collect metrics
+                    metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                    metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
+                    # TODO: implement actual tflpo and theoretical tflpo
+                    n_gpus = self.resource_pool_manager.get_n_gpus()
+                    metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
 
-                    # update critic
-                    if self.use_critic:
-                        with _timer('update_critic', timing_raw):
-                            critic_output = self.critic_wg.update_critic(batch)
-                        critic_output_metrics = reduce_metrics(critic_output.meta_info['metrics'])
-                        metrics.update(critic_output_metrics)
+                    # TODO: make a canonical logger that supports various backend
+                    logger.log(data=metrics, step=self.global_steps)
 
-                    # implement critic warmup
-                    if self.config.trainer.critic_warmup <= self.global_steps:
-                        # update actor
-                        with _timer('update_actor', timing_raw):
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
-                        actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
-                        metrics.update(actor_output_metrics)
+                    if is_last_step:
+                        pprint(f'Final validation metrics: {last_val_metrics}')
+                        progress_bar.close()
+                        return
 
-                    # validate
-                    if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and \
-                        (is_last_step or  self.global_steps % self.config.trainer.test_freq == 0):
-                        with _timer('testing', timing_raw):
-                            val_metrics: dict = self._validate()
-                            if is_last_step:
-                                last_val_metrics = val_metrics
-                        metrics.update(val_metrics)
-
-                    if self.config.trainer.save_freq > 0 and ( is_last_step or \
-                            self.global_steps % self.config.trainer.save_freq == 0):
-                        with _timer('save_checkpoint', timing_raw):
-                            self._save_checkpoint()
-
-                # collect metrics
-                metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
-                metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
-                # TODO: implement actual tflpo and theoretical tflpo
-                n_gpus = self.resource_pool_manager.get_n_gpus()
-                metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
-
-                # TODO: make a canonical logger that supports various backend
-                logger.log(data=metrics, step=self.global_steps)
-
-                if is_last_step:
-                    pprint(f'Final validation metrics: {last_val_metrics}')
-                    progress_bar.close()
-                    return
-
-                progress_bar.update(1)
-                self.global_steps += 1
+                    progress_bar.update(1)
+                    self.global_steps += 1
