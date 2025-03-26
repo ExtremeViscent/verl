@@ -103,7 +103,7 @@ class CustomEngine(Engine):
             if n > 1:
                 all_rids = []
                 for i in range(batch_size):
-                    all_rids.extend([original_rids[i]+f'_nid{j}' for j in range(n)])
+                    all_rids.extend([original_rids[i]+f'_nid{uuid.uuid4().hex[:8]}' for j in range(n)])
                 sampling_params_['n'] = 1
             else:
                 all_rids = original_rids
