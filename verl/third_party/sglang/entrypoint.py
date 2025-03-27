@@ -1,10 +1,12 @@
 import asyncio
-from typing import AsyncIterator, Dict, List, Optional, Union
+from typing import AsyncIterator, Dict, List, Optional, Tuple, Union
 import uuid
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.entrypoints.verl_engine import VerlEngine as VerlEngineBase
+from sglang.srt.entrypoints.verl_engine import _preprocess_tensor_for_update_weights
 from sglang.srt.server import Engine
-from sglang.srt.utils import broadcast_pyobj
+from sglang.srt.utils import MultiprocessingSerializer, broadcast_pyobj
+from sglang.srt.model_executor.model_runner import LocalSerializedTensor
 
 import os
 
@@ -186,6 +188,55 @@ class VerlEngine(VerlEngineBase):
             self._engine = None
 
         dist.barrier(group=self._device_mesh_cpu.get_group())
+
+    def update_weights_from_tensor(
+        self,
+        named_tensors: List[Tuple[str, torch.Tensor]],
+        load_format: Optional[str] = None,
+    ):
+        # Most naive implementation, can optimize a lot if it is bottleneck
+        for tensor_index, (name, tensor) in enumerate(named_tensors):
+            print(f"tensor device: {tensor.device}")
+            serialized_tensor = MultiprocessingSerializer.serialize(
+                _preprocess_tensor_for_update_weights(tensor)
+            )
+
+            if self._tp_rank == 0:
+                gathered_serialized_tensors = [None for _ in range(self._tp_size)]
+            else:
+                gathered_serialized_tensors = None
+            dist.gather_object(
+                obj=serialized_tensor,
+                object_gather_list=gathered_serialized_tensors,
+                dst=self._device_mesh_cpu.mesh.tolist()[0],
+                group=self._device_mesh_cpu.get_group(),
+            )
+
+            if self._tp_rank == 0:
+                self._engine.update_weights_from_tensor(
+                    named_tensors=[
+                        (
+                            name,
+                            LocalSerializedTensor(values=gathered_serialized_tensors),
+                        )
+                    ],
+                    load_format=load_format,
+                    flush_cache=tensor_index == len(named_tensors) - 1,
+                )
+            dist.barrier(group=self._device_mesh_cpu.get_group())
+            print(f"update_weights_from_tensor {self._tp_rank}")
+
+    def release_memory_occupation(self):
+        if self._tp_rank == 0:
+            self._engine.release_memory_occupation()
+        print(f"release_memory_occupation {self._tp_rank}")
+        return None
+
+    def resume_memory_occupation(self):
+        if self._tp_rank == 0:
+            self._engine.resume_memory_occupation()
+        print(f"resume_memory_occupation {self._tp_rank}")
+        return None
 
     def generate(
         self,
