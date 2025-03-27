@@ -150,14 +150,16 @@ class SGLangRollout(BaseRollout):
             device_mesh_cpu=device_mesh_cpu["tp"],
             base_gpu_id=0,
             gpu_id_step=1,
-            enable_memory_saver=True,
+            enable_memory_saver=False,
             # NOTE(Chenyang): if you want to debug the sglang engine
             # please set the following parameters
             # Otherwise, it will make the engine run too slow
             # log_level="INFO",
             # log_requests=True,
             # log_requests_level=2,
-            # max_running_requests=1,
+            max_running_requests=128,
+            cuda_graph_max_bs=128,
+            enable_mixed_chunk=True,
         )
 
         # offload
@@ -167,8 +169,7 @@ class SGLangRollout(BaseRollout):
                       max_new_tokens=config.response_length,
                       presence_penalty=0.0,
                       frequency_penalty=0.0,
-                      repetition_penalty=1.0,
-                      min_new_tokens=1)
+                      repetition_penalty=1.0)
         # supporting adding any sampling params from the config file
         for k in config.keys():
             if hasattr(SamplingParams(), str(k)):

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import AsyncIterator, Dict, List, Optional, Tuple, Union
 import uuid
 from sglang.srt.managers.io_struct import GenerateReqInput
@@ -108,7 +109,7 @@ class CustomEngine(Engine):
                     all_rids.extend([original_rids[i]+f'_nid{uuid.uuid4().hex[:8]}' for j in range(n)])
                 sampling_params_['n'] = 1
             else:
-                all_rids = original_rids
+                all_rids = [original_rids[i]+f'_nid{uuid.uuid4().hex[:8]}' for i in range(batch_size)]
 
 
             # Process each prompt individually to get results as they come in
@@ -150,6 +151,15 @@ class CustomEngine(Engine):
                 self.tokenizer_manager.abort_request(rid)
                 rid_to_task[rid].cancel()
             
+            self.tokenizer_manager.clear_queue()
+            while True:
+                print(f'waiting for idle')
+                task = loop.create_task(self.tokenizer_manager.get_internal_state())
+                internal_state = loop.run_until_complete(task)
+                if internal_state['is_idle']:
+                    print(f'idle')
+                    break
+                time.sleep(1)
             # Map incomplete rid to original rid
             completed_original_rids = []
             for i in range(num_returns):
