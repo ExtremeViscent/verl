@@ -365,7 +365,8 @@ class MegatronPPOActor(BasePPOActor):
                 pass
             else:
                 raise NotImplementedError
-        metrics['actor/grad_norm'] = torch.stack(metrics['actor/grad_norm']).mean().item()
+        avg_gn = sum(metrics['actor/grad_norm']) / len(metrics['actor/grad_norm'])
+        metrics['actor/grad_norm'] = avg_gn
         # add empty cache after each compute
         torch.cuda.empty_cache()
 

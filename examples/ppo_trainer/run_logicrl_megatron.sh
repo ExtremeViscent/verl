@@ -3,7 +3,7 @@ DATA_DIR=$HOME/data/kk
 TP_SIZE=8
 PP_SIZE=2
 MICRO_BSZ_PER_GPU=1
-GROUP_SHUFFLE=False
+GROUP_SHUFFLE=True
 BASE_MODEL=meta-llama/Llama-3.1-8B-Instruct
 
 ray job submit --address="http://localhost:8265" \
@@ -48,7 +48,7 @@ ray job submit --address="http://localhost:8265" \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='verl_sglang_logicrl' \
-    trainer.experiment_name=pp-2-orig \
+    trainer.experiment_name=pp-2-gs \
     +trainer.val_before_train=False \
     +trainer.remove_previous_ckpt_in_save=True \
     trainer.default_hdfs_dir=null \
