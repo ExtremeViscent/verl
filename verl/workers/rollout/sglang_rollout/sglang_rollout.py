@@ -105,9 +105,6 @@ class SGLangRollout(BaseRollout):
         super().__init__()
         self.config = config
 
-        # Kill any existing sglang processes
-        os.system("pkill -f sglang")
-
         assert not (not config.enforce_eager and
                     config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
