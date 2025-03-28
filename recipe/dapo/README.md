@@ -3,7 +3,8 @@
 > Open-Source Algorithm Implementation & Expriement Running: [Yuxuan Tong](https://tongyx361.github.io/), [Guangming Sheng](https://hk.linkedin.com/in/guangming-sheng-b50640211)
 
 > [!IMPORTANT]
-> [2025/03] We published the training record of [an early version of DAPO (w/o Token-level PG Loss & Dynamic Sampling)](./run_dapo_early_qwen2.5_32b.sh), achieving 44%  on AIME 2024, on [W&B](https://wandb.ai/verl-org/DAPO%20Reproduction%20on%20verl).
+> **🔥 News!!!**
+> - [2025/03] We published the training record of [an early version of DAPO (w/o Token-level PG Loss & Dynamic Sampling)](./run_dapo_early_qwen2.5_32b.sh), achieving 44% on AIME 2024, in [W&B](https://wandb.ai/verl-org/DAPO%20Reproduction%20on%20verl).
 
 🏠 [Homepage](https://dapo-sia.github.io/) | 📝 [Paper](https://dapo-sia.github.io/static/pdf/dapo_paper.pdf) | 🤗 [Datasets&Models@HF](https://huggingface.co/collections/BytedTsinghua-SIA/dapo-67d7f1517ee33c8aed059da0) | 🐱 [Code@GitHub](https://github.com/volcengine/verl/tree/gm-tyx/puffin/main/recipe/dapo) | 🐱 [Repo@GitHub](https://github.com/BytedTsinghua-SIA/DAPO)
 
@@ -103,26 +104,32 @@ else:
     batch = batch[:traj_bsz]
 ```
 
-### Token-level Policy Gradient Loss
+### Flexible Loss Aggregation Mode (-> Token-level Policy Gradient Loss)
 
 An example configuration:
 
 ```yaml
 actor_rollout_ref:
   actor:
-    use_token_level_loss: True
+    loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
+    # NOTE: "token-mean" is the default behavior
 ```
 
-Setting `use_token_level_loss` to `True` will mean the policy gradient loss across all the tokens in all the sequences in a batch.
+Setting `loss_agg_mode` to `token-mean` will mean the (policy gradient) loss across all the tokens in all the sequences in a mini-batch.
 
 Core relevant code:
 
 ```python
-if use_token_level_loss:
+if loss_agg_mode == "token-mean":
     pg_loss = verl_F.masked_mean(pg_losses, eos_mask)
-else:
-    pg_loss = torch.sum(pg_losses * eos_mask, dim=1) / seq_len_per_sample
+elif loss_agg_mode == "seq-mean-token-sum":
+    pg_loss = torch.sum(pg_losses * eos_mask, dim=-1) / torch.sum(eos_mask, dim=-1)
     pg_loss = torch.mean(pg_loss)
+elif loss_agg_mode == "seq-mean-token-mean":
+    pg_loss = torch.sum(pg_losses * eos_mask, dim=-1) / torch.sum(eos_mask, dim=-1)
+    pg_loss = torch.mean(pg_loss)
+else:
+    raise ValueError(f"Invalid loss_agg_mode: {loss_agg_mode}")
 ```
 
 ### Overlong Reward Shaping
