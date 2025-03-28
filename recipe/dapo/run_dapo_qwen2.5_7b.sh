@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-project_name='DAPO'
-exp_name='DAPO-Qwen2.5-7B'
+
 
 adv_estimator=grpo
 
@@ -25,24 +24,30 @@ enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
 train_prompt_bsz=512
-group_shuffle=True
+group_shuffle=False
 n_groups=4
 n_resp_per_prompt=16
 train_prompt_mini_bsz=32
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
+project_name='DAPO'
+exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}
+
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
-NNODES=${NNODES:-2}
+NNODES=${NNODES:-4}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-7B-Instruct"}
-CKPTS_DIR=${CKPTS_DIR:-"${HOME}/ckpts/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+
+mkdir -p ${CKPTS_DIR}
+
 
 # Algorithm
 temperature=1.0
@@ -53,7 +58,7 @@ top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 sp_size=4
 use_dynamic_bsz=True
 actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
-infer_ppo_max_token_len=$((max_prompt_length + max_response_length))
+infer_ppo_max_token_len=$((2*(max_prompt_length + max_response_length)))
 offload=True
 gen_tp=4
 
