@@ -921,7 +921,7 @@ class RayPPOTrainer(object):
                                 batch = []
                                 stride = self.config.actor_rollout_ref.rollout.n
                                 for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
-                                    gid = gen_batch_output.batch['gids'][i]
+                                    gid = gen_batch_output.batch['gids'][i].item()
                                     batch.append(macro_batch[gid])
                                 batch = batch_collate_fn(batch)
                             else:
