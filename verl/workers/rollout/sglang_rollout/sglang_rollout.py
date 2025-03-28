@@ -237,6 +237,10 @@ class SGLangRollout(BaseRollout):
                 skip_special_tokens=True,
                 spaces_between_special_tokens=True,
             )
+        is_validate = prompts.meta_info.get('validate', False)
+        if is_validate:
+            kwargs.update(self.config.val_kwargs)
+        n = kwargs.get('n', self.config.n)
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
             print(f"{self.sampling_params=}")
@@ -255,7 +259,7 @@ class SGLangRollout(BaseRollout):
         if response.shape[1] < self.config.response_length:
             response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
             log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
-        if self.config.n > 1 and do_sample:
+        if n > 1 and do_sample:
             idx = idx.repeat_interleave(self.config.n, dim=0)
             attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
             position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
