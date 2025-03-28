@@ -976,17 +976,17 @@ class RayPPOTrainer(object):
 
                             batch.batch['token_level_scores'] = reward_tensor
 
-                        # compute rewards. apply_kl_penalty if available
-                        print(f'{list(reward_extra_infos_dict.keys())=}')
-                        if reward_extra_infos_dict:
-                            batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
-                        if not self.config.actor_rollout_ref.actor.get('use_kl_loss', False):
-                            batch, kl_metrics = apply_kl_penalty(batch,
-                                                                 kl_ctrl=self.kl_ctrl,
-                                                                 kl_penalty=self.config.algorithm.kl_penalty)
-                            metrics.update(kl_metrics)
-                        else:
-                            batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
+                            # compute rewards. apply_kl_penalty if available
+                            print(f'{list(reward_extra_infos_dict.keys())=}')
+                            if reward_extra_infos_dict:
+                                batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
+                            if not self.config.actor_rollout_ref.actor.get('use_kl_loss', False):
+                                batch, kl_metrics = apply_kl_penalty(batch,
+                                                                    kl_ctrl=self.kl_ctrl,
+                                                                    kl_penalty=self.config.algorithm.kl_penalty)
+                                metrics.update(kl_metrics)
+                            else:
+                                batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
 
                             # compute advantages, executed on the driver process
                             batch = compute_advantage(batch,
