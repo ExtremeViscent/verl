@@ -80,6 +80,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
             self.gen_random_states = None
 
     def __enter__(self):
+        torch.cuda.empty_cache()
         log_gpu_memory_usage('Before state_dict() in sharding manager memory', logger=logger)
         params = self.module.state_dict()
         # self.module.cpu()
@@ -88,6 +89,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
         log_gpu_memory_usage('After state_dict() in sharding manager memory', logger=logger)
         # Copy, not share memory
         load_format = None if self.full_params else 'dtensor'
+        self.inference_engine.resume_memory_occupation()
 
         # self.inference_engine.update_weights_from_tensor([(k, v) for k, v in params.items()], load_format=None)
         log_gpu_memory_usage('After sync model weights in sharding manager', logger=logger)
