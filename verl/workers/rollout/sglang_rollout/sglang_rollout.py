@@ -151,7 +151,6 @@ class SGLangRollout(BaseRollout):
             enable_memory_saver=True,
             base_gpu_id=0,
             gpu_id_step=1,
-            enable_memory_saver=True,
             # NOTE(Chenyang): if you want to debug the sglang engine
             # please set the following parameters
             # Otherwise, it will make the engine run too slow
