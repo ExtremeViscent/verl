@@ -438,7 +438,7 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def clean_sglang_process(self):
-        os.system('pkill -f sglang')
+        os.system('pkill sglang')
         return DataProto()
 
 

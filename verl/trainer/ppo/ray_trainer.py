@@ -517,6 +517,7 @@ class RayPPOTrainer(object):
 
     def _validate(self):
         data_source_lst = []
+        reward_tensor_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
         # Lists to collect samples for the table
@@ -524,8 +525,15 @@ class RayPPOTrainer(object):
         sample_outputs = []
         sample_scores = []
 
+        use_legacy_validation = True
+
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
+            data_source = test_batch.non_tensor_batch.get('data_source', ['unknown'] * test_batch.batch['input_ids'].shape[0])
+            for ds in data_source:
+                if ds == 'math_dapo' or ds.startswith('aime'):
+                    use_legacy_validation = False
+                    break
 
             # repeat test batch
             test_batch = test_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.val_kwargs.n,
@@ -582,15 +590,21 @@ class RayPPOTrainer(object):
             test_batch = test_batch.union(test_output_gen_batch)
 
             # evaluate using reward_function
-            result = self.val_reward_fn(test_batch, return_dict=True)
-            reward_tensor = result["reward_tensor"]
-            if "reward_extra_info" in result:
-                for key, lst in result["reward_extra_info"].items():
-                    reward_extra_infos_dict[key].extend(lst)
+            if use_legacy_validation:
+                 reward_tensor = self.val_reward_fn(test_batch)
+            else:
+                result = self.val_reward_fn(test_batch, return_dict=True)
+                reward_tensor = result["reward_tensor"]
+                if "reward_extra_info" in result:
+                    for key, lst in result["reward_extra_info"].items():
+                        reward_extra_infos_dict[key].extend(lst)
 
             # Store scores
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
+
+            if use_legacy_validation:
+                reward_tensor_lst.append(reward_tensor)
 
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
 
@@ -601,6 +615,22 @@ class RayPPOTrainer(object):
 
         data_sources = np.concatenate(data_source_lst, axis=0)
 
+        if use_legacy_validation:
+            # evaluate test_score based on data source
+            reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()
+            data_source_reward = {}
+            for i in range(reward_tensor.shape[0]):
+                data_source = data_sources[i]
+                if data_source not in data_source_reward:
+                    data_source_reward[data_source] = []
+                data_source_reward[data_source].append(reward_tensor[i].item())
+
+            metric_dict = {}
+            for data_source, rewards in data_source_reward.items():
+                metric_dict[f'val/test_score/{data_source}'] = np.mean(rewards)
+
+            return metric_dict
+        
         data_src2prompt2var2vals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         for sample_idx, data_source in enumerate(data_sources):
             prompt = sample_inputs[sample_idx]
