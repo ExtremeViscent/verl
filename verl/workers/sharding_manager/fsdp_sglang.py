@@ -90,7 +90,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
         load_format = None if self.full_params else 'dtensor'
         self.inference_engine.resume_memory_occupation()
 
-        # self.inference_engine.update_weights_from_tensor([(k, v) for k, v in params.items()], load_format=None)
+        self.inference_engine.update_weights_from_tensor([(k, v) for k, v in params.items()], load_format=None)
         log_gpu_memory_usage('After sync model weights in sharding manager', logger=logger)
 
         del params

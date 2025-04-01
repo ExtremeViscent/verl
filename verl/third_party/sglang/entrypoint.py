@@ -234,7 +234,6 @@ class VerlEngine(VerlEngineBase):
                     flush_cache=tensor_index == len(named_tensors) - 1,
                 )
             dist.barrier(group=self._device_mesh_cpu.get_group())
-            print(f"update_weights_from_tensor {self._tp_rank}")
 
     def release_memory_occupation(self):
         if self._tp_rank == 0:
