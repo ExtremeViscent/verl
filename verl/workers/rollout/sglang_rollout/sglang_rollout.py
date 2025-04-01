@@ -148,7 +148,7 @@ class SGLangRollout(BaseRollout):
             dtype=config.dtype,
             mem_fraction_static=config.gpu_memory_utilization,
             device_mesh_cpu=device_mesh_cpu["tp"],
-            enable_memory_saver=True,
+            enable_memory_saver=False,
             base_gpu_id=0,
             gpu_id_step=1,
             # NOTE(Chenyang): if you want to debug the sglang engine

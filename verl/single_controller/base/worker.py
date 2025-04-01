@@ -127,8 +127,12 @@ class Worker(WorkerHelper):
         ###
         # [SUPPORT AMD: torch]
         if "AMD" in torch.cuda.get_device_name():
-            os.environ['CUDA_VISIBLE_DEVICES'] = os.environ.get('ROCR_VISIBLE_DEVICES')
+            # os.environ['CUDA_VISIBLE_DEVICES'] = os.environ.get('HIP_VISIBLE_DEVICES')
             os.environ['LOCAL_RANK'] = os.environ.get('RAY_LOCAL_RANK')
+            # os.environ['CUDA_VISIBLE_DEVICES'] = os.environ.get('LOCAL_RANK')
+            # os.environ['ROCR_VISIBLE_DEVICES'] = os.environ.get('HIP_VISIBLE_DEVICES')
+            print(f"os.environ['CUDA_VISIBLE_DEVICES']: {os.environ['CUDA_VISIBLE_DEVICES']}\n"
+                  f"os.environ['LOCAL_RANK']: {os.environ['LOCAL_RANK']}")
         ###
 
         world_size = int(os.environ['WORLD_SIZE'])
@@ -171,8 +175,9 @@ class Worker(WorkerHelper):
         ###
         # [SUPPORT AMD: torch]
         # torch.cuda.set_device(local_rank)
-        if "AMD" in torch.cuda.get_device_name():
-            torch.cuda.set_device(int(cuda_visible_devices))
+        # if "AMD" in torch.cuda.get_device_name():
+        #     print(f"set device to {cuda_visible_devices}")
+        #     torch.cuda.set_device(cuda_visible_devices)
         ###
 
     def _configure_with_meta(self, meta: WorkerMeta):
