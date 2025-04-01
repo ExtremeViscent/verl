@@ -11,7 +11,7 @@ test_files="['$gsm8k_test_path', '$math_test_path']"
 
 
 project_name='ORZ'
-exp_name='ORZ-Qwen2.5-7B'
+exp_name='ORZ-Qwen2.5-7B-PPO'
 
 adv_estimator=gae
 
@@ -48,7 +48,7 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-2}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-7B-Instruct"}
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-7B"}
 CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/orz/train.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/orz/test.parquet"}
@@ -84,8 +84,6 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     algorithm.kl_ctrl.kl_coef=${kl_coef} \
     actor_rollout_ref.actor.use_kl_loss=${use_kl_loss} \
     actor_rollout_ref.actor.kl_loss_coef=${kl_loss_coef} \
-    actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
-    actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     +algorithm.filter_groups.enable=${enable_filter_groups} \
     +algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
     +algorithm.filter_groups.metric=${filter_groups_metric} \
