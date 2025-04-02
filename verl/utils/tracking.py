@@ -19,6 +19,7 @@ from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import List, Union, Dict, Any
+import uuid
 
 
 class Tracking(object):
@@ -38,8 +39,7 @@ class Tracking(object):
 
         if 'tracking' in default_backend or 'wandb' in default_backend:
             import wandb
-            wandb.init(project=project_name, name=experiment_name, config=config)
-            self.logger['wandb'] = wandb
+            wandb.init(project=project_name, name=experiment_name, config=config, id=str(uuid.uuid4()))
 
         if 'mlflow' in default_backend:
             import mlflow
