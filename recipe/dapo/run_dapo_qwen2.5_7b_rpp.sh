@@ -10,7 +10,7 @@ fi
 
 group_shuffle=$1
 
-adv_estimator=grpo
+adv_estimator=reinforce_plus_plus
 
 kl_coef=0.0
 use_kl_loss=False
@@ -38,7 +38,7 @@ train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
 project_name='DAPO-AMD'
-exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}
+exp_name=DAPO-Qwen2.5-7B-RPP-GS-${group_shuffle}
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
