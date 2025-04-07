@@ -401,16 +401,31 @@ class SGLangRollout(BaseRollout):
             )
             output = []
             for rid, v in completed_outputs.items():
-                # Extract the first value of dict_values to a single variable
-                first_value = list(self.group_cache[rid].values())[0]
-                idx.append(first_value['idx'])
-                attention_mask.append(first_value['attention_mask'])
-                position_ids.append(first_value['position_ids'])
-                gids.append(first_value['gid'])
+                for i, (nid, chunk) in enumerate(v.items()):
+                    if i == 0:
+                        idx.append(self.group_cache[rid][nid]['idx'])
+                        attention_mask.append(self.group_cache[rid][nid]['attention_mask'])
+                        position_ids.append(self.group_cache[rid][nid]['position_ids'])
+                        gids.append(self.group_cache[rid][nid]['gid'])
+                    output.append(chunk)
                 self.group_cache.pop(rid)
-                output.extend(list(v.values()))
+                # Extract the first value of dict_values to a single variable
+                # first_value = list(self.group_cache[rid].values())[0]
+                # idx.append(first_value['idx'])
+                # attention_mask.append(first_value['attention_mask'])
+                # position_ids.append(first_value['position_ids'])
+                # gids.append(first_value['gid'])
+                # self.group_cache.pop(rid)
+                # output.extend(list(v.values()))
+            
             print(f"Completed outputs: {len(output)}, incomplete outputs: {len(incomplete_outputs.keys())}, complete_oids: {len(completed_outputs.keys())}")
             self.group_cache = _post_process_partial_outputs(incomplete_outputs, self.group_cache)
+            prefix = f"/home/aiscuser/verl/dev/dbgout/{uuid4().hex[:8]}_"
+            torch.save(idx, f"{prefix}_idx.pt")
+            torch.save(attention_mask, f"{prefix}_attention_mask.pt")
+            torch.save(position_ids, f"{prefix}_position_ids.pt")
+            torch.save(gids, f"{prefix}_gids.pt")
+            torch.save(output, f"{prefix}_output.pt")
             device_ = idx[0].device
             idx = torch.stack(idx, dim=0).to(device_)
             attention_mask = torch.stack(attention_mask, dim=0)

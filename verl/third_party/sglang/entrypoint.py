@@ -100,8 +100,8 @@ class CustomEngine(Engine):
 
         #Check prequsites
         n = sampling_params.get("n", 1) if sampling_params is not None else 1
-        sampling_params['n'] = 1
-        assert sampling_params.get("n", 1) == 1, "n should be 1"
+        sampling_params_ = sampling_params.copy()
+        sampling_params_['n'] = 1
         assert num_returns is not None, "num_returns should be provided"
         assert rid is not None, "rid should be provided"
         assert stream, "stream should be True"
@@ -118,7 +118,7 @@ class CustomEngine(Engine):
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,
-            sampling_params=sampling_params,
+            sampling_params=sampling_params_,
             image_data=image_data,
             return_logprob=return_logprob,
             logprob_start_len=logprob_start_len,
@@ -148,13 +148,17 @@ class CustomEngine(Engine):
             outputs[oid] = {}
             completed_rids[oid] = []
 
-        for chunk in generator_wrapper():
+        wrapped_generator = generator_wrapper()
+
+        cnt = 0
+        for chunk in wrapped_generator:
             if chunk['meta_info']['finish_reason'] is not None:
                 id = chunk['meta_info']['id']
                 oid = id.split('_nid')[0]
                 outputs[oid][id] = chunk
                 if id not in completed_rids[oid]:
                     completed_rids[oid].append(id)
+                    cnt += 1
                     if len(completed_rids[oid]) == n:
                         completed_oids.append(oid)
                         if len(completed_oids) >= num_returns:
@@ -166,8 +170,8 @@ class CustomEngine(Engine):
 
         for rid in incomplete_rids:
             self.tokenizer_manager.abort_request(rid)
-        
-        self.tokenizer_manager.clear_queue()
+
+        # self.tokenizer_manager.clear_queue()
         while True:
             print(f'waiting for idle')
             task = loop.create_task(self.tokenizer_manager.get_internal_state())
@@ -176,6 +180,18 @@ class CustomEngine(Engine):
                 print(f'idle')
                 break
             time.sleep(1)
+
+        # incomplete_rids_ = incomplete_rids.copy()
+
+        # for chunk in wrapped_generator:
+        #     id = chunk['meta_info']['id']
+        #     if id in incomplete_rids_:
+        #         incomplete_rids_.remove(id)
+        #         outputs[oid][id] = chunk
+        #         print(f'{len(incomplete_rids_)}')
+        #     if len(incomplete_rids_) == 0:
+        #         break
+                
 
         completed_outputs = {}
         incomplete_outputs = {}
@@ -289,7 +305,6 @@ class VerlEngine(VerlEngineBase):
                     lora_path=lora_path,
                     custom_logit_processor=custom_logit_processor,
                 )
-                output = completed_outputs
                 completed_original_rids = None
                 incomplete_original_rids = None
             else:
