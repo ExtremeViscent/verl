@@ -20,7 +20,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 16))
+max_response_length=$((256))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
@@ -30,14 +30,14 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=512
+train_prompt_bsz=32
 n_groups=4
-n_resp_per_prompt=16
-train_prompt_mini_bsz=32
+n_resp_per_prompt=4
+train_prompt_mini_bsz=16
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-AMD'
+project_name='DAPO-DBG'
 exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}-DBG
 
 # Ray
@@ -49,7 +49,7 @@ NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-7B"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/output/ckpts/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
@@ -69,10 +69,7 @@ offload=True
 gen_tp=4
 
 
-ray job submit --runtime-env="${RUNTIME_ENV}" \
-    --address="${RAY_ADDRESS}" \
-    --working-dir "${WORKING_DIR}" \
-    -- python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TEST_FILE" \
@@ -117,7 +114,7 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${sp_size} \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.20 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \
@@ -140,7 +137,7 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.test_freq=10 \
     trainer.save_freq=20 \
     trainer.total_epochs=100 \

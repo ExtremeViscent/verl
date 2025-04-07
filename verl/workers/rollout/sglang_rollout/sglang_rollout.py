@@ -82,6 +82,15 @@ def _post_process_outputs(tokenizer, output):
         batched_logprobs = pad_sequence(batched_logprobs, batch_first=True, padding_value=pad_token_id)
     return batched_output_token_ids, batched_logprobs
 
+def _post_process_partial_outputs(output, cache):
+    for rid, v in output.items():
+        for nid, v_ in v.items():
+            output_ids = []
+            for l in v_["meta_info"]["output_token_logprobs"]:
+                output_ids.append(l[1])
+            cache[rid][nid]['processed_idx'].extend(output_ids)
+    return cache
+
 
 class SGLangRollout(BaseRollout):
 
@@ -148,7 +157,7 @@ class SGLangRollout(BaseRollout):
             dtype=config.dtype,
             mem_fraction_static=config.gpu_memory_utilization,
             device_mesh_cpu=device_mesh_cpu["tp"],
-            enable_memory_saver=False,
+            enable_memory_saver=True,
             base_gpu_id=0,
             gpu_id_step=1,
             # NOTE(Chenyang): if you want to debug the sglang engine
@@ -307,6 +316,7 @@ class SGLangRollout(BaseRollout):
         position_ids = prompts.batch['position_ids']
         gids = prompts.batch['gids']
         bsz = prompts.batch['input_ids'].size(0)
+        n = kwargs.get('n', self.config.n)
 
         for i in range(bsz):
             idx = prompts.batch['input_ids'][i]
@@ -315,13 +325,17 @@ class SGLangRollout(BaseRollout):
             idx_ = _pre_process_inputs(self.pad_token_id, idx)
             gid = gids[i]
             rid = f"req_{i}_{gid}"
-            self.group_cache[rid] = {
-                'idx': idx,
-                'processed_idx': idx_,
-                'attention_mask': attention_mask,
-                'position_ids': position_ids,
-                'gid': gid
-            }
+            self.group_cache[rid] = {}
+            for j in range(n):
+                nid = f"{rid}_nid{uuid4().hex[:8]}"
+                self.group_cache[rid][nid] = {
+                    'idx': idx,
+                    'processed_idx': idx_,
+                    'attention_mask': attention_mask,
+                    'position_ids': position_ids,
+                    'gid': gid,
+                    'nid': nid,
+                }
         self.group_meta = prompts.meta_info
         if prompts.meta_info.get('group_shuffle', False):
             n_groups = prompts.meta_info['n_groups']
@@ -340,10 +354,15 @@ class SGLangRollout(BaseRollout):
         attention_mask = []
         position_ids = []
         gids = []
-        new_group_cache = {}
-        for i, (rid, v) in enumerate(self.group_cache.items()):
-            idx_list.append(v['processed_idx'])
-            rids.append(rid)
+        for rid, v in self.group_cache.items():
+            new_group_cache = {}
+            for nid, v_ in v.items():
+                idx_list.append(v_['processed_idx'])
+                nid = f'{rid}_nid{uuid4().hex[:8]}'
+                v_['nid'] = nid
+                new_group_cache[nid] = v_
+                rids.append(nid)
+            self.group_cache[rid] = new_group_cache
         do_sample = self.group_meta.get('do_sample', True)
         eos_token_id = self.group_meta['eos_token_id']
 
@@ -372,7 +391,7 @@ class SGLangRollout(BaseRollout):
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
             print(f"{self.sampling_params=}")
-            output, completed_rids, incomplete_rids = self.inference_engine.generate(
+            completed_outputs, incomplete_outputs = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
                 return_logprob=True,
@@ -380,17 +399,23 @@ class SGLangRollout(BaseRollout):
                 rid=rids,
                 num_returns=batch_size,
             )
-            for rid in completed_rids:
-                idx.append(self.group_cache[rid]['idx'])
-                attention_mask.append(self.group_cache[rid]['attention_mask'])
-                position_ids.append(self.group_cache[rid]['position_ids'])
-                gids.append(self.group_cache[rid]['gid'])
+            output = []
+            for rid, v in completed_outputs.items():
+                # Extract the first value of dict_values to a single variable
+                first_value = list(self.group_cache[rid].values())[0]
+                idx.append(first_value['idx'])
+                attention_mask.append(first_value['attention_mask'])
+                position_ids.append(first_value['position_ids'])
+                gids.append(first_value['gid'])
+                self.group_cache.pop(rid)
+                output.extend(list(v.values()))
+            print(f"Completed outputs: {len(output)}, incomplete outputs: {len(incomplete_outputs.keys())}, complete_oids: {len(completed_outputs.keys())}")
+            self.group_cache = _post_process_partial_outputs(incomplete_outputs, self.group_cache)
             device_ = idx[0].device
             idx = torch.stack(idx, dim=0).to(device_)
             attention_mask = torch.stack(attention_mask, dim=0)
             position_ids = torch.stack(position_ids, dim=0)
             gids = torch.stack(gids, dim=0).cpu()
-            self.group_cache = {rid: self.group_cache[rid] for rid in incomplete_rids}
                 
         out = _post_process_outputs(self.tokenizer, output)
 
