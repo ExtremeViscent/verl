@@ -19,6 +19,7 @@ from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 import os
 import ray
 import hydra
+import torch
 
 
 def get_custom_reward_fn(config):
@@ -53,6 +54,50 @@ def get_custom_reward_fn(config):
 def main(config):
     run_ppo(config)
 
+def get_running_jobs():
+    cmd = "ray job list"
+    job_hist = os.popen(cmd)
+    running_job_ids = []
+    for line in job_hist:
+        if "<JobStatus.RUNNING: 'RUNNING'>" in line:
+            job_id = line.split("job_id='")[1].split("'")[0]
+            running_job_ids.append(job_id)
+            print(f"Running job: {job_id}")
+    return running_job_ids
+
+def log_using_devices(cuda_visible_devices):
+    with open(f"/tmp/verl.devices", "a") as f:
+        for device in cuda_visible_devices:
+            f.write(f"{device},")
+
+def get_current_job_id():
+    return ray.get_runtime_context().get_job_id()
+
+def get_available_devices():
+    available_devices = [i for i in range(torch.cuda.device_count())]
+    using_devices = []
+    if os.path.exists(f"/tmp/verl.devices"):
+        with open(f"/tmp/verl.devices", "r") as f:
+            txt = f.read()
+            for device in txt.split(","):
+                if device:
+                    using_devices.append(int(device))
+    available_devices = [device for device in available_devices if device not in using_devices]
+    return ",".join([str(device) for device in available_devices]) if available_devices else None
+
+def set_cuda_visible_devices():
+    available_devices = get_available_devices()
+    os.environ["CUDA_VISIBLE_DEVICES"] = available_devices
+
+def check_port_available(port):
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(('localhost', port))
+        s.close()
+        return True
+    except socket.error:
+        return False
 
 def run_ppo(config) -> None:
     # TODO(linjunrong.ocss884): this ENV is left for resolving SGLang conflict with ray devices

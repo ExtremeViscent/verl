@@ -27,7 +27,7 @@ import verl.utils.torch_functional as verl_F
 from omegaconf import DictConfig, open_dict
 from verl import DataProto
 from verl.single_controller.base import Worker
-from verl.single_controller.base.decorator import register, Dispatch
+from verl.single_controller.base.decorator import register, Dispatch, Execute
 from verl.utils import hf_tokenizer, hf_processor
 from verl.utils.debug import log_gpu_memory_usage
 from verl.utils.fs import copy_to_local
@@ -478,10 +478,16 @@ class ActorRolloutRefWorker(Worker):
             output = self.ulysses_sharding_manager.postprocess_data(data=output)
             output = output.to('cpu')
 
-        if self._is_offload_param:
-            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+
+
+
         if self._is_offload_optimizer:
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
+
+        self.rollout_sharding_manager.sync_params()
+
+        if self._is_offload_param:
+            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
 
         return output
     
@@ -501,9 +507,11 @@ class ActorRolloutRefWorker(Worker):
         self.rollout.feed_group_cache(prompts=prompts)
         return DataProto()
     
-    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    @register(dispatch_mode=Dispatch.DP_ROLLOUT)
     def generate_sequences_ingroup(self):
         assert self._is_rollout
+        if self.rollout.inference_engine._tp_rank != 0:
+            return DataProto()
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
             
@@ -520,7 +528,7 @@ class ActorRolloutRefWorker(Worker):
             output = self.rollout.generate_sequences_ingroup()
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
-            output = self.rollout_sharding_manager.postprocess_data(output)
+            # output = self.rollout_sharding_manager.postprocess_data(output)
 
         output = output.to('cpu')
 
@@ -528,7 +536,7 @@ class ActorRolloutRefWorker(Worker):
         log_gpu_memory_usage('After recompute log prob', logger=logger)
         return output
 
-    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    @register(dispatch_mode=Dispatch.DP_ROLLOUT)
     def generate_sequences(self, prompts: DataProto):
         # Support all hardwares
         prompts = prompts.to(torch.cuda.current_device())
@@ -557,15 +565,23 @@ class ActorRolloutRefWorker(Worker):
             log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)
 
             prompts = self.rollout_sharding_manager.preprocess_data(prompts)
+            if self.rollout.inference_engine._tp_rank != 0:
+                return DataProto()
             output = self.rollout.generate_sequences(prompts=prompts)
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
-            output = self.rollout_sharding_manager.postprocess_data(output)
+            # output = self.rollout_sharding_manager.postprocess_data(output)
 
         output = output.to('cpu')
 
         # clear kv cache
         log_gpu_memory_usage('After recompute log prob', logger=logger)
+        return output
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def sync_rollout(self, output: DataProto):
+        assert self._is_rollout
+        output = self.rollout_sharding_manager.postprocess_data(output)
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)

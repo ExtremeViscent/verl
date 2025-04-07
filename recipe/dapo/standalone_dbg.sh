@@ -10,7 +10,7 @@ fi
 
 group_shuffle=$1
 
-adv_estimator=reinforce_plus_plus
+adv_estimator=grpo
 
 kl_coef=0.0
 use_kl_loss=False
@@ -20,7 +20,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 16))
+max_response_length=$((256))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
@@ -30,17 +30,18 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=512
+train_prompt_bsz=4
 n_groups=4
 n_resp_per_prompt=16
-train_prompt_mini_bsz=32
+train_prompt_mini_bsz=4
 train_micro_bsz_per_gpu=4
-infer_micro_bsz_per_gpu=8
+infer_micro_bsz_per_gpu=4
 
-project_name='DAPO-AMD'
-exp_name=DAPO-Qwen2.5-7B-RPP-GS-${group_shuffle}
+project_name='DBG'
+exp_name=Qwen2.5-7B-GS-${group_shuffle}
 
 # Ray
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-"0,1,2,3"}
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
@@ -68,10 +69,7 @@ offload=True
 gen_tp=4
 
 
-ray job submit --runtime-env="${RUNTIME_ENV}" \
-    --working-dir "${WORKING_DIR}" \
-    --entrypoint-num-gpus 4 \
-    -- python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TEST_FILE" \
@@ -134,7 +132,7 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     +custom_reward_function.overlong_buffer.enable=${enable_overlong_buffer} \
     +custom_reward_function.overlong_buffer.len=${overlong_buffer_len} \
     +custom_reward_function.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \

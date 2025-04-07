@@ -38,7 +38,7 @@ train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
 project_name='DAPO-AMD'
-exp_name=DAPO-Qwen2.5-7B-RPP-GS-${group_shuffle}
+exp_name=Qwen2.5-7B-RPP-GS-${group_shuffle}
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
@@ -68,10 +68,7 @@ offload=True
 gen_tp=4
 
 
-ray job submit --runtime-env="${RUNTIME_ENV}" \
-    --working-dir "${WORKING_DIR}" \
-    --entrypoint-num-gpus 4 \
-    -- python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TEST_FILE" \

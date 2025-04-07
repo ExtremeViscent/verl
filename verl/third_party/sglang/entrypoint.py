@@ -206,7 +206,6 @@ class VerlEngine(VerlEngineBase):
     ):
         # Most naive implementation, can optimize a lot if it is bottleneck
         for tensor_index, (name, tensor) in enumerate(named_tensors):
-            print(f"tensor device: {tensor.device}")
             serialized_tensor = MultiprocessingSerializer.serialize(
                 _preprocess_tensor_for_update_weights(tensor)
             )
@@ -233,7 +232,6 @@ class VerlEngine(VerlEngineBase):
                     load_format=load_format,
                     flush_cache=tensor_index == len(named_tensors) - 1,
                 )
-            dist.barrier(group=self._device_mesh_cpu.get_group())
 
     def release_memory_occupation(self):
         if self._tp_rank == 0:
@@ -302,26 +300,26 @@ class VerlEngine(VerlEngineBase):
             completed_original_rids = None
             incomplete_original_rids = None
 
-        # Most naive implementation, can extract tensor and send via gloo if too slow
-        [output] = broadcast_pyobj(
-            data=[output],
-            rank=self._tp_rank,
-            dist_group=self._device_mesh_cpu.get_group(),
-            src=self._device_mesh_cpu.mesh[0].item(),
-        )
-        if num_returns is not None:
-            [incomplete_original_rids] = broadcast_pyobj(
-                data=[incomplete_original_rids],
-                rank=self._tp_rank,
-                dist_group=self._device_mesh_cpu.get_group(),
-                src=self._device_mesh_cpu.mesh[0].item(),
-            )
-            [completed_original_rids] = broadcast_pyobj(
-                data=[completed_original_rids],
-                rank=self._tp_rank,
-                dist_group=self._device_mesh_cpu.get_group(),
-                src=self._device_mesh_cpu.mesh[0].item(),
-            )
+        # # Most naive implementation, can extract tensor and send via gloo if too slow
+        # [output] = broadcast_pyobj(
+        #     data=[output],
+        #     rank=self._tp_rank,
+        #     dist_group=self._device_mesh_cpu.get_group(),
+        #     src=self._device_mesh_cpu.mesh[0].item(),
+        # )
+        # if num_returns is not None:
+        #     [incomplete_original_rids] = broadcast_pyobj(
+        #         data=[incomplete_original_rids],
+        #         rank=self._tp_rank,
+        #         dist_group=self._device_mesh_cpu.get_group(),
+        #         src=self._device_mesh_cpu.mesh[0].item(),
+        #     )
+        #     [completed_original_rids] = broadcast_pyobj(
+        #         data=[completed_original_rids],
+        #         rank=self._tp_rank,
+        #         dist_group=self._device_mesh_cpu.get_group(),
+        #         src=self._device_mesh_cpu.mesh[0].item(),
+        #     )
 
         if num_returns is not None:
             return output, completed_original_rids, incomplete_original_rids

@@ -154,8 +154,8 @@ class Worker(WorkerHelper):
 
         ###
         # [SUPPORT AMD: torch]
-        if "AMD" in torch.cuda.get_device_name():
-            cuda_visible_devices = str(local_rank)
+        # if "AMD" in torch.cuda.get_device_name():
+        #     cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
         ###
 
         store = {
@@ -166,8 +166,8 @@ class Worker(WorkerHelper):
             '_master_addr': master_addr,
             '_master_port': master_port
         }
-        if cuda_visible_devices is not None:
-            store['_cuda_visible_devices'] = cuda_visible_devices
+        # if cuda_visible_devices is not None:
+        #     store['_cuda_visible_devices'] = cuda_visible_devices
 
         meta = WorkerMeta(store=store)
         self._configure_with_meta(meta=meta)

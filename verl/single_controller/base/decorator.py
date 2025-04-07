@@ -35,7 +35,7 @@ class Dispatch(Enum):
     DP_COMPUTE_PROTO = 9
     DP_COMPUTE_PROTO_WITH_FUNC = 10
     DP_COMPUTE_METRIC = 11
-
+    DP_ROLLOUT = 12
 
 class Execute(Enum):
     ALL = 0
@@ -297,6 +297,26 @@ def collect_dp_compute_data_proto(worker_group, output):
     return _concat_data_proto_or_future(output)
 
 
+def collect_dp_rollout_data_proto(worker_group, output):
+    from verl.protocol import DataProto
+    import ray
+
+    non_empty_output = []
+
+    for idx, o in enumerate(output):
+        assert isinstance(o, (DataProto, ray.ObjectRef)), f"expecting {o} to be DataProto, but got {type(o)}"
+        if len(o) > 0:
+            non_empty_output.append(o)
+
+    dp_size = len(non_empty_output)
+    world_size = worker_group.world_size
+    n_repeat = world_size // dp_size
+
+    for i in range(dp_size):
+        non_empty_output[i] = non_empty_output[i].repeat(n_repeat)
+    return _concat_data_proto_or_future(non_empty_output)
+
+
 def get_predefined_dispatch_fn(dispatch_mode):
     predefined_dispatch_mode_fn = {
         Dispatch.ONE_TO_ALL: {
@@ -342,6 +362,10 @@ def get_predefined_dispatch_fn(dispatch_mode):
         Dispatch.DP_COMPUTE_METRIC: {
             'dispatch_fn': dispatch_dp_compute_data_proto,
             'collect_fn': collect_dp_compute
+        },
+        Dispatch.DP_ROLLOUT: {
+            'dispatch_fn': dispatch_dp_compute_data_proto,
+            'collect_fn': collect_dp_rollout_data_proto
         }
     }
     return predefined_dispatch_mode_fn[dispatch_mode]

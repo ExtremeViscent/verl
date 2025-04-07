@@ -69,6 +69,7 @@ gen_tp=4
 
 
 ray job submit --runtime-env="${RUNTIME_ENV}" \
+    --address="${RAY_ADDRESS}" \
     --working-dir "${WORKING_DIR}" \
     -- python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
@@ -136,7 +137,7 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=True \
     trainer.test_freq=10 \

@@ -10,7 +10,7 @@ fi
 
 group_shuffle=$1
 
-adv_estimator=reinforce_plus_plus
+adv_estimator=grpo
 
 kl_coef=0.0
 use_kl_loss=False
@@ -38,9 +38,10 @@ train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
 project_name='DAPO-AMD'
-exp_name=DAPO-Qwen2.5-7B-RPP-GS-${group_shuffle}
+exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}-DBG
 
 # Ray
+CUDA_VISIBLE_DEVICES_dev="4,5,6,7"
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
@@ -69,8 +70,8 @@ gen_tp=4
 
 
 ray job submit --runtime-env="${RUNTIME_ENV}" \
+    --address="${RAY_ADDRESS}" \
     --working-dir "${WORKING_DIR}" \
-    --entrypoint-num-gpus 4 \
     -- python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
