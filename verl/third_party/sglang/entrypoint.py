@@ -21,6 +21,31 @@ async def get_first_value(async_gen):
 
 class CustomEngine(Engine):
 
+    def gather_partial_outputs(self):
+        partial_outputs = {}
+        for _, recv_obj in self.tokenizer_manager.orphan_outputs.items():
+            for i, rid in enumerate(recv_obj.rids):
+                if recv_obj.finished_reasons[i] and recv_obj.finished_reasons[i]['type'] == 'abort':
+                    output_strs = recv_obj.output_strs[i]
+                    partial_outputs[rid] = output_strs
+
+        partial_output_ids = {}
+        for rid, output_strs in partial_outputs.items():
+            partial_output_ids[rid] = self.tokenizer_manager.tokenizer.encode(output_strs)
+        outputs = []
+        for rid, output_ids in partial_output_ids.items():
+            meta_info = {
+                "id": rid,
+                "finish_reason": {'type': 'abort'},
+            }
+            output_dict  = {
+                "output_ids": output_ids,
+                "meta_info": meta_info,
+            }
+            outputs.append(output_dict)
+        self.tokenizer_manager.orphan_outputs = {}
+        return outputs
+
     async def get_first_n_results(self, tasks, num_returns):
         outputs = {}
         completed_oids = []
@@ -43,23 +68,20 @@ class CustomEngine(Engine):
 
         for oid, task_dict in tasks.items():
             for rid in task_dict.keys():
-                req = AbortReq(rid)
-                self.tokenizer_manager.send_to_scheduler.send_pyobj(req)
+                self.tokenizer_manager.abort_request(rid)
 
         # Wait for idle
         while True:
-            print(f'waiting for idle')
+            # print(f'waiting for idle')
             internal_state = await self.tokenizer_manager.get_internal_state()
             if internal_state['is_idle']:
-                print(f'idle')
+                # print(f'idle')
                 break
         
         # Scavenge incomplete results
         incomplete_tasks = [task for task_dict in tasks.values() for task in task_dict.values()]
-        # timeout = 10
-        # while timeout > 2:
+
         await asyncio.sleep(1)
-        #     timeout -= 1
         for task in incomplete_tasks:
             if task.done():
                 result = await task
@@ -68,6 +90,7 @@ class CustomEngine(Engine):
                 oid = rid.split('_nid')[0]
                 outputs[oid][rid] = result
                 finish_reason = result['meta_info'].get('finish_reason', {type: ''})
+                # to_delete_rids.remove(rid)
                 if finish_reason['type'] != 'abort':
                     completed_rids.append(rid)
                     tasks[oid].pop(rid)
@@ -77,8 +100,17 @@ class CustomEngine(Engine):
             else:
                 task.cancel()
 
+        self.tokenizer_manager.orphan_outputs = {}
+
+        # partial_outputs = self.gather_partial_outputs()
+
+        # for output in partial_outputs:
+        #     rid = output['meta_info']['id']
+        #     oid = rid.split('_nid')[0]
+        #     outputs[oid][rid] = output
+
         return outputs
-    
+
     def custom_generate(
         self,
         # The input prompt. It can be a single prompt or a batch of prompts.
@@ -99,7 +131,6 @@ class CustomEngine(Engine):
         rid: Optional[Union[List[str], str]] = None,
         num_returns: Optional[int] = None,
     ) -> Union[Dict]:
-        batch_size = 0
         if prompt is not None:
             batch_size = len(prompt)
         if input_ids is not None:
@@ -208,13 +239,11 @@ class VerlEngine(VerlEngineBase):
     def release_memory_occupation(self):
         if self._tp_rank == 0:
             self._engine.release_memory_occupation()
-        print(f"release_memory_occupation {self._tp_rank}")
         return None
 
     def resume_memory_occupation(self):
         if self._tp_rank == 0:
             self._engine.resume_memory_occupation()
-        print(f"resume_memory_occupation {self._tp_rank}")
         return None
 
     def generate(

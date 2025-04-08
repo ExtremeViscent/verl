@@ -375,7 +375,7 @@ class SGLangRollout(BaseRollout):
                     cache[oid][rid]['output'] = output
                 else:
                     processed_idx = cache[oid][rid]['processed_idx']
-                    processed_idx = _post_process_partial_outputs(processed_idx, output)
+                    processed_idx.extend(output.get('output_ids', []))
                     cache[oid][rid]['processed_idx'] = processed_idx
         ret = []
         idx = []
@@ -401,20 +401,6 @@ class SGLangRollout(BaseRollout):
             position_ids.extend([v['position_ids'] for v in cache_dict.values()])
             gids.extend([v['gid'] for v in cache_dict.values()])
         self.group_cache = cache
-        # for oid, cache_dict in cache.items():
-        #     n_finished = 0
-        #     for rid, v in cache_dict.items():
-        #         if v['output']:
-        #             n_finished += 1
-        #     if n_finished == len(cache_dict):
-        #         ret.extend([v['output'] for v in cache_dict.values()])
-        #         idx.extend([v['idx'] for v in cache_dict.values()])
-        #         attention_mask.extend([v['attention_mask'] for v in cache_dict.values()])
-        #         position_ids.extend([v['position_ids'] for v in cache_dict.values()])
-        #         gids.extend([v['gid'] for v in cache_dict.values()])
-        #         cache.pop(oid)
-        #     if len(ret) >= batch_size:
-        #         return ret, idx, attention_mask, position_ids, gids
         return ret, idx, attention_mask, position_ids, gids
     
     @torch.no_grad()
