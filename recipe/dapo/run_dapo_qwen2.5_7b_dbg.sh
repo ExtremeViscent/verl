@@ -20,7 +20,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((256))
+max_response_length=$((1024 * 4))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
@@ -41,7 +41,7 @@ project_name='DAPO-DBG'
 exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}-DBG
 
 # Ray
-CUDA_VISIBLE_DEVICES_dev="4,5,6,7"
+CUDA_VISIBLE_DEVICES_dev="0,1,2,3"
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
@@ -49,7 +49,7 @@ NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-3B"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/tmp/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
@@ -132,7 +132,7 @@ python3 -m verl.trainer.main_ppo \
     +custom_reward_function.overlong_buffer.enable=${enable_overlong_buffer} \
     +custom_reward_function.overlong_buffer.len=${overlong_buffer_len} \
     +custom_reward_function.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \

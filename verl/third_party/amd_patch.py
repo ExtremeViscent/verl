@@ -41,7 +41,7 @@ def main():
         print(f"Located aiter.jit.core: {aiter_core_path}")
         patch_line(
             aiter_core_path,
-            74,
+            75,
             'if multiprocessing.current_process().name == \'MainProcess\' and os.environ.get(\'RANK\', 0) == 0:'
         )
     else:

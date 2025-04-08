@@ -37,7 +37,7 @@ train_prompt_mini_bsz=32
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-AMD'
+project_name='DAPO-AMD-PR'
 exp_name=Qwen2.5-7B-GS-${group_shuffle}
 
 # Ray
@@ -49,7 +49,7 @@ NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-7B"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/output/ckpts/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
@@ -61,7 +61,7 @@ top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Performance Related Parameter
-sp_size=4
+sp_size=1
 use_dynamic_bsz=True
 actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
 infer_ppo_max_token_len=$((max_prompt_length + max_response_length))

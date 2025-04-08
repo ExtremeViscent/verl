@@ -2,7 +2,7 @@ import asyncio
 import time
 from typing import AsyncIterator, Dict, List, Optional, Tuple, Union
 import uuid
-from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.managers.io_struct import GenerateReqInput, AbortReq
 from sglang.srt.entrypoints.verl_engine import VerlEngine as VerlEngineBase
 from sglang.srt.entrypoints.verl_engine import _preprocess_tensor_for_update_weights
 from sglang.srt.server import Engine
@@ -15,46 +15,70 @@ import torch
 import torch.distributed as dist
 from torch.distributed.tensor import DeviceMesh, DTensor
 
-
-async def get_first_n_results(tasks, all_rids, num_returns, n=1):
-    grouped = n > 1
-    results = []
-    incomplete_rids = set()
-    completed_rids = set()
-    if grouped:
-        original_rids = [rid.split('_nid')[0] for rid in all_rids]
-        original_rids = list(set(original_rids))
-        n = len(all_rids) // len(original_rids)
-        partial_results = {}
-        for rid in original_rids:
-            partial_results[rid] = []
-        for task in asyncio.as_completed(tasks):
-            result = await task
-            result = result[0]
-            original_rid = result['meta_info']['id'].split('_nid')[0]
-            partial_results[original_rid].append(result)
-            completed_rids.add(result['meta_info']['id'])
-            if len(partial_results[original_rid]) == n:
-                results.extend(partial_results[original_rid])
-                del partial_results[original_rid]
-                if len(results) == num_returns * n:
-                    incomplete_rids = set(all_rids) - completed_rids
-                    return results, incomplete_rids
-    else:
-        for task in asyncio.as_completed(tasks):
-            result = await task
-            result = result[0]
-            results.append(result)
-            completed_rids.add(result['meta_info']['id'])
-            if len(results) == num_returns:
-                incomplete_rids = set(all_rids) - completed_rids
-                return results, incomplete_rids
-
 # Helper function to get first value from an async generator
 async def get_first_value(async_gen):
     return await async_gen.__anext__()
 
 class CustomEngine(Engine):
+
+    async def get_first_n_results(self, tasks, num_returns):
+        outputs = {}
+        completed_oids = []
+        completed_rids = []
+        all_tasks = [task for task_dict in tasks.values() for task in task_dict.values()]
+        for oid in tasks.keys():
+            outputs[oid] = {}
+        for task in asyncio.as_completed(all_tasks):
+            result = await task
+            rid = result['meta_info']['id']
+            oid = rid.split('_nid')[0]
+            outputs[oid][rid] = result
+            completed_rids.append(rid)
+            tasks[oid].pop(rid)
+            if len(tasks[oid].keys()) == 0:
+                completed_oids.append(oid)
+                tasks.pop(oid)
+            if len(completed_oids) >= num_returns:
+                break
+
+        for oid, task_dict in tasks.items():
+            for rid in task_dict.keys():
+                req = AbortReq(rid)
+                self.tokenizer_manager.send_to_scheduler.send_pyobj(req)
+
+        # Wait for idle
+        while True:
+            print(f'waiting for idle')
+            internal_state = await self.tokenizer_manager.get_internal_state()
+            if internal_state['is_idle']:
+                print(f'idle')
+                break
+        
+        # Scavenge incomplete results
+        incomplete_tasks = [task for task_dict in tasks.values() for task in task_dict.values()]
+        # timeout = 10
+        # while timeout > 2:
+        await asyncio.sleep(1)
+        #     timeout -= 1
+        for task in incomplete_tasks:
+            if task.done():
+                result = await task
+                incomplete_tasks.remove(task)
+                rid = result['meta_info']['id']
+                oid = rid.split('_nid')[0]
+                outputs[oid][rid] = result
+                finish_reason = result['meta_info'].get('finish_reason', {type: ''})
+                if finish_reason['type'] != 'abort':
+                    completed_rids.append(rid)
+                    tasks[oid].pop(rid)
+                    if len(tasks[oid].keys()) == 0:
+                        completed_oids.append(oid)
+                        tasks.pop(oid)
+            else:
+                task.cancel()
+
+        return outputs
+    
     def custom_generate(
         self,
         # The input prompt. It can be a single prompt or a batch of prompts.
@@ -71,7 +95,7 @@ class CustomEngine(Engine):
         token_ids_logprob: Optional[Union[List[List[int]], List[int]]] = None,
         lora_path: Optional[List[Optional[str]]] = None,
         custom_logit_processor: Optional[Union[List[str], str]] = None,
-        stream: bool = True,
+        stream: bool = False,
         rid: Optional[Union[List[str], str]] = None,
         num_returns: Optional[int] = None,
     ) -> Union[Dict]:
@@ -80,127 +104,48 @@ class CustomEngine(Engine):
             batch_size = len(prompt)
         if input_ids is not None:
             batch_size = len(input_ids)
-
-        # # Generate unique request IDs if not provided
-        # if rid is None:
-        #     original_rids = [f"req_{i}_{uuid.uuid4().hex[:8]}" for i in range(batch_size)]
-        # else:
-        #     original_rids = rid if isinstance(rid, list) else [rid]
-
-        # # Convert when n>1
-        # n = sampling_params.get("n", 1) if sampling_params is not None else 1
-        # sampling_params_ = sampling_params.copy()
-        # if n > 1:
-        #     all_rids = []
-        #     for i in range(batch_size):
-        #         all_rids.extend([original_rids[i]+f'_nid{uuid.uuid4().hex[:8]}' for j in range(n)])
-        #     sampling_params_['n'] = 1
-        # else:
-        #     all_rids = [original_rids[i]+f'_nid{uuid.uuid4().hex[:8]}' for i in range(batch_size)]
-
-        #Check prequsites
+        loop = asyncio.get_event_loop()
+        
         n = sampling_params.get("n", 1) if sampling_params is not None else 1
         sampling_params_ = sampling_params.copy()
         sampling_params_['n'] = 1
         assert num_returns is not None, "num_returns should be provided"
         assert rid is not None, "rid should be provided"
-        assert stream, "stream should be True"
 
         original_rids = list(set([rid.split('_nid')[0] for rid in rid]))
         all_rids = rid
 
 
-        # extended_input_ids = []
-        # for i in range(batch_size):
-        #     for j in range(n):
-        #         extended_input_ids.append(input_ids[i])
-
-        obj = GenerateReqInput(
-            text=prompt,
-            input_ids=input_ids,
-            sampling_params=sampling_params_,
-            image_data=image_data,
-            return_logprob=return_logprob,
-            logprob_start_len=logprob_start_len,
-            top_logprobs_num=top_logprobs_num,
-            token_ids_logprob=token_ids_logprob,
-            lora_path=lora_path,
-            custom_logit_processor=custom_logit_processor,
-            stream=stream,
-            rid=all_rids,
-        )
-        loop = asyncio.get_event_loop()
-        generator = self.tokenizer_manager.generate_request(obj, None)
-
-        def generator_wrapper():
-            while True:
-                try:
-                    chunk = loop.run_until_complete(generator.__anext__())
-                    yield chunk
-                except StopAsyncIteration:
-                    break
-
-        outputs = {}
-        completed_rids = {}
-        completed_oids = []
-
+        objs = {}
+        tasks = {}
         for oid in original_rids:
-            outputs[oid] = {}
-            completed_rids[oid] = []
+            objs[oid] = {}
+            tasks[oid] = {}
+        for i, rid in enumerate(all_rids):
+            oid = rid.split('_nid')[0]
+            objs[oid][rid] = GenerateReqInput(
+                text=None,
+                input_ids=input_ids[i],
+                sampling_params=sampling_params_,
+                image_data=None,
+                return_logprob=return_logprob,
+                logprob_start_len=logprob_start_len,
+                top_logprobs_num=top_logprobs_num,
+                token_ids_logprob=token_ids_logprob,
+                lora_path=lora_path,
+                custom_logit_processor=custom_logit_processor,
+                stream=False,
+                rid=rid,
+            )
+            generator = self.tokenizer_manager.generate_request(objs[oid][rid], None)
+            task = loop.create_task(get_first_value(generator))
+            tasks[oid][rid] = task
 
-        wrapped_generator = generator_wrapper()
 
-        cnt = 0
-        for chunk in wrapped_generator:
-            if chunk['meta_info']['finish_reason'] is not None:
-                id = chunk['meta_info']['id']
-                oid = id.split('_nid')[0]
-                outputs[oid][id] = chunk
-                if id not in completed_rids[oid]:
-                    completed_rids[oid].append(id)
-                    cnt += 1
-                    if len(completed_rids[oid]) == n:
-                        completed_oids.append(oid)
-                        if len(completed_oids) >= num_returns:
-                            break
-        incomplete_oids = list(set(original_rids) - set(completed_oids))
-        completed_rids = completed_rids.values()
-        completed_rids = [item for sublist in completed_rids for item in sublist]
-        incomplete_rids = list(set(all_rids) - set(completed_rids))
 
-        for rid in incomplete_rids:
-            self.tokenizer_manager.abort_request(rid)
+        outputs = loop.run_until_complete(self.get_first_n_results(tasks, num_returns))
 
-        # self.tokenizer_manager.clear_queue()
-        while True:
-            print(f'waiting for idle')
-            task = loop.create_task(self.tokenizer_manager.get_internal_state())
-            internal_state = loop.run_until_complete(task)
-            if internal_state['is_idle']:
-                print(f'idle')
-                break
-            time.sleep(1)
-
-        # incomplete_rids_ = incomplete_rids.copy()
-
-        # for chunk in wrapped_generator:
-        #     id = chunk['meta_info']['id']
-        #     if id in incomplete_rids_:
-        #         incomplete_rids_.remove(id)
-        #         outputs[oid][id] = chunk
-        #         print(f'{len(incomplete_rids_)}')
-        #     if len(incomplete_rids_) == 0:
-        #         break
-                
-
-        completed_outputs = {}
-        incomplete_outputs = {}
-        for oid in completed_oids:
-            completed_outputs[oid] = outputs[oid]
-        for oid in incomplete_oids:
-            incomplete_outputs[oid] = outputs[oid]
-
-        return completed_outputs, incomplete_outputs
+        return outputs
 
 class VerlEngine(VerlEngineBase):
     def __init__(
@@ -305,10 +250,8 @@ class VerlEngine(VerlEngineBase):
                     lora_path=lora_path,
                     custom_logit_processor=custom_logit_processor,
                 )
-                completed_original_rids = None
-                incomplete_original_rids = None
             else:
-                completed_outputs, incomplete_outputs = self._engine.custom_generate(
+                output = self._engine.custom_generate(
                     prompt=prompt,
                     sampling_params=sampling_params,
                     input_ids=input_ids,
@@ -322,9 +265,6 @@ class VerlEngine(VerlEngineBase):
                     num_returns=num_returns,
                     rid=rid,
                 )
-                output = completed_outputs
-                completed_original_rids = None
-                incomplete_original_rids = None
 
         # # Most naive implementation, can extract tensor and send via gloo if too slow
         # [output] = broadcast_pyobj(
@@ -347,7 +287,4 @@ class VerlEngine(VerlEngineBase):
         #         src=self._device_mesh_cpu.mesh[0].item(),
         #     )
 
-        if num_returns is not None:
-            return completed_outputs, incomplete_outputs
-        else:
-            return output
+        return output
