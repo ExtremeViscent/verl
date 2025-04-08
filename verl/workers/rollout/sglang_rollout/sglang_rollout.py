@@ -185,6 +185,7 @@ class SGLangRollout(BaseRollout):
 
         self.tokenizer = tokenizer
         self.pad_token_id = tokenizer.pad_token_id
+        self.partial_rollout = config.get("partial_rollout", True)
 
     @contextmanager
     def update_sampling_params(self, **kwargs):
@@ -348,7 +349,7 @@ class SGLangRollout(BaseRollout):
         rids = []
         flat_group_cache = [v for cache_dict in self.group_cache.values() for v in cache_dict.values()]
         for v in flat_group_cache:
-            if v['output'] is None:
+            if v['output'] is None or not self.partial_rollout:
                 rid = v['nid']
                 oid = rid.split('_nid')[0]
                 rid_ = f'{oid}_nid{uuid4().hex[:8]}'
@@ -358,6 +359,7 @@ class SGLangRollout(BaseRollout):
                 # Amend cache
                 v_ = v.copy()
                 v_['nid'] = rid_
+                v_['output'] = None
                 self.group_cache[oid].pop(rid)
                 self.group_cache[oid][rid_] = v_
         oids = [rid.split('_nid')[0] for rid in rids]
@@ -373,7 +375,7 @@ class SGLangRollout(BaseRollout):
                 finished = finish_reason['type'] != 'abort'
                 if finished:
                     cache[oid][rid]['output'] = output
-                else:
+                elif self.partial_rollout:
                     processed_idx = cache[oid][rid]['processed_idx']
                     processed_idx.extend(output.get('output_ids', []))
                     cache[oid][rid]['processed_idx'] = processed_idx
