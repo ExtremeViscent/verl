@@ -412,7 +412,7 @@ class SGLangRollout(BaseRollout):
         position_ids = []
         gids = []
         idx_list, rids, num_oids = self.prepare_batch()
-        print(f"num_oids: {num_oids}, batch_size: {batch_size}")
+        print(f"num_oids: {num_oids}, batch_size: {batch_size}, fed ids: {len(idx_list)}")
         num_returns = min(num_oids, batch_size)
         do_sample = self.group_meta.get('do_sample', True)
         eos_token_id = self.group_meta['eos_token_id']

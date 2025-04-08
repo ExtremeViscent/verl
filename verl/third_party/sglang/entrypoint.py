@@ -100,14 +100,13 @@ class CustomEngine(Engine):
             else:
                 task.cancel()
 
-        self.tokenizer_manager.orphan_outputs = {}
+        partial_outputs = self.gather_partial_outputs()
 
-        # partial_outputs = self.gather_partial_outputs()
-
-        # for output in partial_outputs:
-        #     rid = output['meta_info']['id']
-        #     oid = rid.split('_nid')[0]
-        #     outputs[oid][rid] = output
+        self.tokenizer_manager.clear_queue()
+        for output in partial_outputs:
+            rid = output['meta_info']['id']
+            oid = rid.split('_nid')[0]
+            outputs[oid][rid] = output
 
         return outputs
 
