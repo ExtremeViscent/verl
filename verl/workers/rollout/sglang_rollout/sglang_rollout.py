@@ -39,6 +39,7 @@ from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length, pa
 from verl.third_party.sglang.entrypoint import VerlEngine
 from torch.distributed.device_mesh import init_device_mesh
 from sglang.srt.sampling.sampling_params import SamplingParams
+from verl.utils.distributed import broadcast_pyobj
 from verl.third_party.sglang import parallel_state as sglang_ps
 import torch.distributed
 from torch.nn.utils.rnn import pad_sequence
@@ -343,28 +344,77 @@ class SGLangRollout(BaseRollout):
             n_over = prompts.meta_info['n_over']
             self.mini_bsz = bsz // n_over
 
+        # Sync the group_cache across all the tp ranks
+        # rids = []
+        # for oid, cache_dict in self.group_cache.items():
+        #     for rid, v in cache_dict.items():
+        #         rids.append(rid)
+        # from verl.utils.distributed import broadcast_pyobj
+        # rids = broadcast_pyobj(
+        #     data=rids,
+        #     rank=self.inference_engine._tp_rank,
+        #     dist_group=self.inference_engine._device_mesh_cpu.get_group(),
+        #     src=self.inference_engine._device_mesh_cpu.mesh[0].item(),
+        # )
+        # new_group_cache = {}
+        # for oid, cache_dict in self.group_cache.items():
+        #     new_group_cache[oid] = {}
+        #     for old_rid, v in cache_dict.items():
+        #         new_rid = rids.pop(0)
+        #         new_group_cache[oid][new_rid] = v
+        # self.group_cache = new_group_cache
+        
     @torch.no_grad()
     def prepare_batch(self):
         idx_list = []
         rids = []
         flat_group_cache = [v for cache_dict in self.group_cache.values() for v in cache_dict.values()]
+        # rid_map = {}
         for v in flat_group_cache:
             if v['output'] is None or not self.partial_rollout:
                 rid = v['nid']
                 oid = rid.split('_nid')[0]
                 rid_ = f'{oid}_nid{uuid4().hex[:8]}'
+                # rid_map[rid] = rid_
                 # Prepare inputs for the engine
                 idx_list.append(v['processed_idx'])
                 rids.append(rid_)
                 # Amend cache
-                v_ = v.copy()
-                v_['nid'] = rid_
-                v_['output'] = None
-                self.group_cache[oid].pop(rid)
-                self.group_cache[oid][rid_] = v_
+                if self.inference_engine._tp_rank == 0:
+                    v_ = v.copy()
+                    v_['nid'] = rid_
+                    v_['output'] = None
+                    self.group_cache[oid].pop(rid)
+                    self.group_cache[oid][rid_] = v_
         oids = [rid.split('_nid')[0] for rid in rids]
         num_oids = len(set(oids))
+        # Sync the rids across all the tp ranks
+        # rid_map = broadcast_pyobj(
+        #     data=rid_map,
+        #     rank=self.inference_engine._tp_rank,
+        #     dist_group=self.inference_engine._device_mesh_cpu.get_group(),
+        #     src=self.inference_engine._device_mesh_cpu.mesh[0].item(),
+        # )
+        # flat_group_cache = [v for cache_dict in self.group_cache.values() for v in cache_dict.values()]
+        # for v in flat_group_cache:
+        #     old_rid = v['nid']
+        #     new_rid = rid_map[old_rid]
+        #     oid = old_rid.split('_nid')[0]
+        #     v['nid'] = new_rid
+        #     self.group_cache[oid].pop(old_rid)
+        #     self.group_cache[oid][new_rid] = v
+
+        cache = self.group_cache if self.inference_engine._tp_rank == 0 else None
+        cache = broadcast_pyobj(
+            data=cache,
+            rank=self.inference_engine._tp_rank,
+            dist_group=self.inference_engine._device_mesh_cpu.get_group(),
+            src=self.inference_engine._device_mesh_cpu.mesh[0].item(),
+        )
+        self.group_cache = cache
+
         return idx_list, rids, num_oids
+    
 
     @torch.no_grad
     def collate_responses(self, output, batch_size):

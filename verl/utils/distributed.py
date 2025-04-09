@@ -13,6 +13,7 @@
 # limitations under the License.
 """Utilities for distributed training."""
 import os
+import pickle
 
 
 def initialize_global_process_group(timeout_second=36000):
@@ -26,3 +27,23 @@ def initialize_global_process_group(timeout_second=36000):
     if torch.distributed.is_initialized():
         torch.cuda.set_device(local_rank)
     return local_rank, rank, world_size
+
+def broadcast_pyobj(data, rank, dist_group, src):
+    import torch
+    import torch.distributed as dist
+
+    if rank == src:
+        buffer = pickle.dumps(data)
+        storage = torch.ByteStorage.from_buffer(buffer)
+        tensor = torch.ByteTensor(storage)
+        size_tensor = torch.LongTensor([tensor.numel()])
+        dist.broadcast(size_tensor, src=src, group=dist_group)
+        dist.broadcast(tensor, src=src, group=dist_group)
+        return data
+    else:
+        size_tensor = torch.LongTensor([0])
+        dist.broadcast(size_tensor, src=src, group=dist_group)
+        tensor = torch.ByteTensor(size_tensor.item())
+        dist.broadcast(tensor, src=src, group=dist_group)
+        buffer = tensor.numpy().tobytes()
+        return pickle.loads(buffer)

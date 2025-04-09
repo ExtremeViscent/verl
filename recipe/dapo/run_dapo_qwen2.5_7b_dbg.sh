@@ -3,12 +3,14 @@ set -euxo pipefail
 
 # usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle>
 
-if [ $# -ne 1 ]; then
-    echo "Usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle>"
+if [ $# -ne 2 ]; then
+    echo "Usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle> <partial_rollout>"
     exit 1
 fi
 
 group_shuffle=$1
+partial_rollout=$2
+
 
 adv_estimator=grpo
 
@@ -97,6 +99,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${infer_ppo_max_token_len} \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
+    +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \
