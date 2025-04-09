@@ -293,14 +293,16 @@ class VerlEngine(VerlEngineBase):
                     num_returns=num_returns,
                     rid=rid,
                 )
+        else:
+            output = None
 
         # # Most naive implementation, can extract tensor and send via gloo if too slow
-        # [output] = broadcast_pyobj(
-        #     data=[output],
-        #     rank=self._tp_rank,
-        #     dist_group=self._device_mesh_cpu.get_group(),
-        #     src=self._device_mesh_cpu.mesh[0].item(),
-        # )
+        [output] = broadcast_pyobj(
+            data=[output],
+            rank=self._tp_rank,
+            dist_group=self._device_mesh_cpu.get_group(),
+            src=self._device_mesh_cpu.mesh[0].item(),
+        )
         # if num_returns is not None:
         #     [incomplete_original_rids] = broadcast_pyobj(
         #         data=[incomplete_original_rids],
