@@ -3,12 +3,13 @@ set -euxo pipefail
 
 # usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle>
 
-if [ $# -ne 1 ]; then
-    echo "Usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle>"
+if [ $# -ne 2 ]; then
+    echo "Usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle> <partial_rollout>"
     exit 1
 fi
 
 group_shuffle=$1
+partial_rollout=$2
 
 adv_estimator=grpo
 
@@ -30,15 +31,21 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=512
+train_prompt_bsz=64
 n_groups=4
 n_resp_per_prompt=16
 train_prompt_mini_bsz=32
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-AMD-PR'
-exp_name=Qwen2.5-7B-GS-${group_shuffle}
+project_name='DAPO-New'
+exp_name=Qwen2.5-7B
+if [ "${group_shuffle}" = "True" ]; then
+    exp_name="${exp_name}-GS"
+    if [ "${partial_rollout}" = "True" ]; then
+        exp_name="${exp_name}-PR"
+    fi
+fi
 
 # Ray
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-"0,1,2,3"}
@@ -49,7 +56,7 @@ NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-7B"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/output/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
@@ -97,6 +104,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${infer_ppo_max_token_len} \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
+    +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \
