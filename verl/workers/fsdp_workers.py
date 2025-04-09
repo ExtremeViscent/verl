@@ -510,8 +510,6 @@ class ActorRolloutRefWorker(Worker):
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences_ingroup(self):
         assert self._is_rollout
-        if self.rollout.inference_engine._tp_rank != 0:
-            return DataProto()
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
             
