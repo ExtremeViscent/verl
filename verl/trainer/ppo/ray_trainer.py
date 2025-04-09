@@ -558,7 +558,7 @@ class RayPPOTrainer(object):
             print(f'test_gen_batch_padded meta info: {test_gen_batch_padded.meta_info}')
             print(f'pad_size: {pad_size}')
             test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded)
-            test_output_gen_batch_padded = self.actor_rollout_wg.sync_rollout(test_output_gen_batch_padded)
+            # test_output_gen_batch_padded = self.actor_rollout_wg.sync_rollout(test_output_gen_batch_padded)
 
             # unpad
             test_output_gen_batch = unpad_dataproto(test_output_gen_batch_padded, pad_size=pad_size)
@@ -947,7 +947,7 @@ class RayPPOTrainer(object):
                             if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) \
                                 or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
-                                gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
+                                # gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
                                 batch = []
                                 stride = self.config.actor_rollout_ref.rollout.n
                                 for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
@@ -956,7 +956,7 @@ class RayPPOTrainer(object):
                                 batch = batch_collate_fn(batch)
                             else:
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                                gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
+                                # gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
 
                         batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
                                                                 dtype=object)

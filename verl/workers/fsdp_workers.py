@@ -507,7 +507,7 @@ class ActorRolloutRefWorker(Worker):
         self.rollout.feed_group_cache(prompts=prompts)
         return DataProto()
     
-    @register(dispatch_mode=Dispatch.DP_ROLLOUT)
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences_ingroup(self):
         assert self._is_rollout
         if self.rollout.inference_engine._tp_rank != 0:
@@ -528,7 +528,7 @@ class ActorRolloutRefWorker(Worker):
             output = self.rollout.generate_sequences_ingroup()
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
-            # output = self.rollout_sharding_manager.postprocess_data(output)
+            output = self.rollout_sharding_manager.postprocess_data(output)
 
         output = output.to('cpu')
 
@@ -536,7 +536,7 @@ class ActorRolloutRefWorker(Worker):
         log_gpu_memory_usage('After recompute log prob', logger=logger)
         return output
 
-    @register(dispatch_mode=Dispatch.DP_ROLLOUT)
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
         # Support all hardwares
         prompts = prompts.to(torch.cuda.current_device())
@@ -565,12 +565,12 @@ class ActorRolloutRefWorker(Worker):
             log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)
 
             prompts = self.rollout_sharding_manager.preprocess_data(prompts)
-            if self.rollout.inference_engine._tp_rank != 0:
-                return DataProto()
+            # if self.rollout.inference_engine._tp_rank != 0:
+            #     return DataProto()
             output = self.rollout.generate_sequences(prompts=prompts)
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
-            # output = self.rollout_sharding_manager.postprocess_data(output)
+            output = self.rollout_sharding_manager.postprocess_data(output)
 
         output = output.to('cpu')
 
