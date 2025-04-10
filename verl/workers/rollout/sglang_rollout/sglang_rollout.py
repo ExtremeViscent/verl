@@ -167,6 +167,7 @@ class SGLangRollout(BaseRollout):
             cuda_graph_max_bs=128,
             enable_mixed_chunk=True,
             stream_interval=256,
+            enable_torch_compile=True,
         )
 
         # offload
