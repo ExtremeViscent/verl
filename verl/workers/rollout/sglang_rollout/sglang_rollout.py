@@ -167,6 +167,7 @@ class SGLangRollout(BaseRollout):
             cuda_graph_max_bs=128,
             enable_mixed_chunk=True,
             stream_interval=256,
+            enable_torch_compile=True,
         )
 
         # offload
@@ -248,6 +249,8 @@ class SGLangRollout(BaseRollout):
         is_validate = prompts.meta_info.get('validate', False)
         if is_validate:
             kwargs.update(self.config.val_kwargs)
+        batch_sampling_params = prompts.meta_info.get('sampling_params', {})
+        kwargs.update(batch_sampling_params)
         n = kwargs.get('n', self.config.n)
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
