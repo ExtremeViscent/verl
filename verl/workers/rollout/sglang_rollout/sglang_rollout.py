@@ -330,7 +330,6 @@ class SGLangRollout(BaseRollout):
                 all_rids[oid].append(nid)
 
         # Sync the rids across all the tp ranks
-        print(f"Rank {self.inference_engine._tp_rank} all_rids: {all_rids}")
         all_rids = broadcast_pyobj(
             data=all_rids,
             rank=torch.distributed.get_rank(),
