@@ -370,9 +370,9 @@ class SGLangRollout(BaseRollout):
     def get_cached_outputs(self):
         cache_dict = {}
         for oid, cache_dict in self.group_cache.items():
-            cache_dict[oid] = {}
             for rid, cached_state in cache_dict.items():
-                cache_dict[oid][rid] = cached_state.get('cached_ids', [])
+                if cached_state.get('cached_ids', None) is not None:
+                    cache_dict[rid] = cached_state['cached_ids']
         return cache_dict
         
     @torch.no_grad()
@@ -436,6 +436,7 @@ class SGLangRollout(BaseRollout):
         attention_mask = []
         position_ids = []
         gids = []
+        rids = []
         flat_group_cache = [v for cache_dict in cache.values() for v in cache_dict.values()]
         n_finished = {}
         finished_cache = {}
@@ -454,8 +455,9 @@ class SGLangRollout(BaseRollout):
             attention_mask.extend([v['attention_mask'] for v in cache_dict.values()])
             position_ids.extend([v['position_ids'] for v in cache_dict.values()])
             gids.extend([v['gid'] for v in cache_dict.values()])
+            rids.extend([v['rid'] for v in cache_dict.values()])
         self.group_cache = cache
-        return ret, idx, attention_mask, position_ids, gids
+        return ret, idx, attention_mask, position_ids, gids, rids
     
     @torch.no_grad()
     def generate_sequences_ingroup(self, **kwargs) -> DataProto:
@@ -553,6 +555,9 @@ class SGLangRollout(BaseRollout):
             },
             batch_size=batch_size,
         )
+        non_tensor_batch = {
+            "rids": rids,
+        }
         meta_info = {
             "cached_outputs": self.get_cached_outputs(),
         }
@@ -563,4 +568,4 @@ class SGLangRollout(BaseRollout):
 
         self.group_iter += 1
 
-        return DataProto(batch=batch, meta_info=meta_info)
+        return DataProto(batch=batch, non_tensor_batch=non_tensor_batch, meta_info=meta_info)

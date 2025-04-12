@@ -938,6 +938,8 @@ class RayPPOTrainer(object):
                     batch = macro_batch
                     gen_batch = macro_gen_batch
                     n_iter = 1
+                old_logprob_cache = {}
+                old_ids_cache = {}
                 for k in range(n_iter):
                     is_last_step = self.global_steps >= self.total_training_steps
 
@@ -950,6 +952,10 @@ class RayPPOTrainer(object):
                                 # gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
                                 batch = []
                                 stride = self.config.actor_rollout_ref.rollout.n
+                                if getattr(self.config.actor_rollout_ref.rollout, 'partial_rollout', False):
+                                    cached_outputs = gen_batch_output.pop(meta_info_keys=['cached_outputs']).meta_info['cached_outputs']
+                                    for rid, cached_ids in cached_outputs.items():
+                                        old_ids_cache[rid] = cached_ids
                                 for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
                                     gid = gen_batch_output.batch['gids'][i].item()
                                     batch.append(macro_batch[gid])
@@ -978,6 +984,10 @@ class RayPPOTrainer(object):
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
                             batch = batch.union(old_log_prob)
+
+                        # compute old_log_probs_cache
+                        with _timer('old_log_prob_cache', timing_raw):
+                            
 
                         if self.use_reference_policy:
                             # compute reference log_prob

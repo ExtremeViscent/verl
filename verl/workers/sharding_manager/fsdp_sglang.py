@@ -34,6 +34,7 @@ from torch.distributed.device_mesh import DeviceMesh
 
 from verl import DataProto
 from verl.utils.torch_functional import (broadcast_dict_tensor, allgather_dict_tensors)
+from verl.utils.distributed import broadcast_pyobj
 from verl.utils.debug import log_gpu_memory_usage
 from sglang.srt.entrypoints.verl_engine import VerlEngine
 from .base import BaseShardingManager
@@ -141,6 +142,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
         tp_size = self.device_mesh["infer_tp"].mesh.size()[0]
         src_rank = global_rank // tp_size * tp_size
         broadcast_dict_tensor(data.batch, src=src_rank, group=self.device_mesh["infer_tp"].get_group())
+        data.non_tensor_batch = broadcast_pyobj(data.non_tensor_batch, src=src_rank, dist_group=self.device_mesh["infer_tp"].get_group(), rank=global_rank)
         if tp_size > 1:
             local_prompts = data.chunk(chunks=tp_size)
             data = local_prompts[tp_rank]
