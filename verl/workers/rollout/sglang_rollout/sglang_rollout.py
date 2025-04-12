@@ -26,10 +26,12 @@
 # limitations under the License.
 
 from __future__ import annotations
+from collections import OrderedDict
 import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List
 from uuid import uuid4
+import numpy as np
 from omegaconf import DictConfig
 from tensordict import TensorDict
 from verl import DataProto
@@ -296,7 +298,7 @@ class SGLangRollout(BaseRollout):
                 "prompts": idx,
                 "responses": response,
                 "input_ids": seq,  # here input_ids become the whole sentences
-                # 'old_log_probs': log_probs, # we will recompute old log prob with actor
+                'old_log_probs': log_probs, # we will recompute old log prob with actor
                 "attention_mask": attention_mask,
                 "position_ids": position_ids,
             },
@@ -363,6 +365,15 @@ class SGLangRollout(BaseRollout):
         elif prompts.meta_info.get('oversubscribe', False):
             n_over = prompts.meta_info['n_over']
             self.mini_bsz = bsz // n_over
+
+    @torch.no_grad()
+    def get_cached_outputs(self):
+        cache_dict = {}
+        for oid, cache_dict in self.group_cache.items():
+            cache_dict[oid] = {}
+            for rid, cached_state in cache_dict.items():
+                cache_dict[oid][rid] = cached_state.get('cached_ids', [])
+        return cache_dict
         
     @torch.no_grad()
     def prepare_batch(self):
@@ -377,7 +388,10 @@ class SGLangRollout(BaseRollout):
                 rid_ = f'{oid}_nid{uuid4().hex[:8]}'
                 rid_map[rid] = rid_
                 # Prepare inputs for the engine
-                idx_list.append(v['processed_idx'])
+                processed_idx = v['processed_idx']
+                if self.partial_rollout:
+                    processed_idx.extend(v.get('cached_ids', []))
+                idx_list.append(processed_idx)
                 rids.append(rid_)
         oids = [rid.split('_nid')[0] for rid in rids]
         num_oids = len(set(oids))
@@ -395,6 +409,12 @@ class SGLangRollout(BaseRollout):
             self.group_cache[oid][new_rid] = v
 
         return idx_list, rids, num_oids
+
+    def convert_output_id_to_logprob(self, output_ids):
+        log_probs = []
+        for output_id in output_ids:
+            log_probs.append((0., output_id, None))
+        return log_probs
     
 
     @torch.no_grad
@@ -405,11 +425,12 @@ class SGLangRollout(BaseRollout):
                 finish_reason = output['meta_info']['finish_reason']
                 finished = finish_reason['type'] != 'abort'
                 if finished:
+                    if self.partial_rollout:
+                        cached_log_probs = self.convert_output_id_to_logprob(self.group_cache[oid][rid].get('cached_ids', []))
+                        output['output_token_logprobs'] = output.get('output_token_logprobs', []) + cached_log_probs
                     cache[oid][rid]['output'] = output
                 elif self.partial_rollout:
-                    processed_idx = cache[oid][rid]['processed_idx']
-                    processed_idx.extend(output.get('output_ids', []))
-                    cache[oid][rid]['processed_idx'] = processed_idx
+                    cache[oid][rid]['cached_ids'] = output.get('output_ids', [])
         ret = []
         idx = []
         attention_mask = []
@@ -532,6 +553,9 @@ class SGLangRollout(BaseRollout):
             },
             batch_size=batch_size,
         )
+        meta_info = {
+            "cached_outputs": self.get_cached_outputs(),
+        }
 
         # free cache engine
         if self.config.free_cache_engine and self.inference_engine._engine is not None:
@@ -539,4 +563,4 @@ class SGLangRollout(BaseRollout):
 
         self.group_iter += 1
 
-        return DataProto(batch=batch)
+        return DataProto(batch=batch, meta_info=meta_info)

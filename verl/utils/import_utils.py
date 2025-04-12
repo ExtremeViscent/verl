@@ -22,6 +22,7 @@ from typing import List
 
 @cache
 def is_megatron_core_available():
+    return False
     try:
         from megatron.core import parallel_state as mpu
         return True
