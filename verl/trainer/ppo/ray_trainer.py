@@ -49,6 +49,7 @@ from torch.utils.data import RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from uuid import uuid4
 from verl.utils.torch_functional import encode_string_to_tensor, decode_tensor_to_string
+from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
 
 WorkerType = Type[Worker]
 
@@ -233,7 +234,7 @@ def _timer(name: str, timing_raw: Dict[str, float]):
         yield
     timing_raw[name] = timer.last
 
-def update_rids(macro_batch, rid_to_batch):
+def update_rids(macro_batch, rid_to_batch, cached_old_log_probs):
     old_rids = macro_batch.batch['rids']
     new_rids = []
     new_rids_tensor = []
@@ -248,12 +249,13 @@ def update_rids(macro_batch, rid_to_batch):
             rid_map[old_rid] = new_rid
             new_rids[-1].append(new_rid)
             rid_to_batch[new_rid] = rid_to_batch.pop(old_rid)
+            cached_old_log_probs[new_rid] = cached_old_log_probs.pop(old_rid)
             new_rid = encode_string_to_tensor(new_rid)
             new_rids_tensor[-1].append(new_rid)
         new_rids_tensor[-1] = torch.stack(new_rids_tensor[-1])
     rid_map = DataProto(meta_info={'rid_map': rid_map})
     macro_batch.batch['rids'] = torch.stack(new_rids_tensor)
-    return macro_batch, rid_map, rid_to_batch
+    return macro_batch, rid_map, rid_to_batch, cached_old_log_probs
     
 
 
@@ -887,6 +889,35 @@ class RayPPOTrainer(object):
                                                     prefix=logging_prefix)
         metrics.update(global_balance_stats)
 
+    def cache_old_log_probs(self, cached_old_log_probs, new_old_log_prob: DataProto, batch: DataProto):
+        new_old_log_prob_list = []
+        for i in range(new_old_log_prob.batch['old_log_probs'].size(0)):
+            unpadded_new_old_log_probs, indices, *_ = unpad_input(new_old_log_prob.batch['old_log_probs'][i].unsqueeze(-1).unsqueeze(0), batch.batch['response_mask'][i].unsqueeze(0))
+            unpadded_new_old_log_probs = unpadded_new_old_log_probs.squeeze(-1)
+            rid = batch.batch['rids'][i]
+            rid = decode_tensor_to_string(rid)
+            unpadded_cached_old_log_probs = cached_old_log_probs[rid]
+            cached_length = len(unpadded_cached_old_log_probs)
+            delta = len(unpadded_new_old_log_probs) - cached_length
+            if delta > 0:
+                unpadded_old_log_probs = torch.cat([unpadded_cached_old_log_probs, unpadded_new_old_log_probs[cached_length:]])
+            else:
+                unpadded_old_log_probs = unpadded_cached_old_log_probs
+                
+            cached_old_log_probs[rid] = unpadded_old_log_probs
+            # restore padding
+            padded_old_log_probs = pad_input(
+                hidden_states=unpadded_old_log_probs.unsqueeze(-1),
+                indices=indices,
+                batch=1,
+                seqlen=batch.batch['response_mask'].shape[1]
+            ).squeeze(-1).squeeze(0)
+            new_old_log_prob_list.append(padded_old_log_probs)
+        new_old_log_prob.batch['old_log_probs'] = torch.stack(new_old_log_prob_list, dim=0)
+        return cached_old_log_probs, new_old_log_prob
+
+
+
     def fit(self):
         """
         The training loop of PPO.
@@ -949,6 +980,7 @@ class RayPPOTrainer(object):
                     rids = []
                     rid_to_batch = {}
                     rids_tensor = []
+                    cached_old_log_probs = {}
                     for i in range(len(macro_gen_batch)):
                         oid = f"req_{uuid4().hex[:8]}"
                         rids.append([])
@@ -957,6 +989,7 @@ class RayPPOTrainer(object):
                             rid = f"{oid}_nid{uuid4().hex[:8]}"
                             rids[-1].append(rid)
                             rid_to_batch[rid] = i
+                            cached_old_log_probs[rid] = torch.zeros(0)
                             rids_tensor[-1].append(encode_string_to_tensor(rid))
                         rids_tensor[-1] = torch.stack(rids_tensor[-1], dim=0)
                     macro_gen_batch.batch['rids'] = torch.stack(rids_tensor, dim=0)
@@ -978,8 +1011,6 @@ class RayPPOTrainer(object):
                     batch = macro_batch
                     gen_batch = macro_gen_batch
                     n_iter = 1
-                cached_ids = {}
-                cached_old_log_probs = {}
                 for k in range(n_iter):
                     is_last_step = self.global_steps >= self.total_training_steps
 
@@ -988,7 +1019,7 @@ class RayPPOTrainer(object):
                         with _timer('gen', timing_raw):
                             if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) \
                                 or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
-                                macro_batch, rid_map, rid_to_batch = update_rids(macro_batch, rid_to_batch)
+                                macro_batch, rid_map, rid_to_batch, cached_old_log_probs = update_rids(macro_batch, rid_to_batch, cached_old_log_probs)
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(rid_map)
                                 batch = []
                                 uids = []
@@ -1027,6 +1058,7 @@ class RayPPOTrainer(object):
                         # recompute old_log_probs
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                            cached_old_log_probs, old_log_prob = self.cache_old_log_probs(cached_old_log_probs, old_log_prob, batch)
                             batch = batch.union(old_log_prob)
 
                         # Filter out finished requests
@@ -1045,6 +1077,8 @@ class RayPPOTrainer(object):
                                     finished_batch[oid].append(batch[i])
                                 if n_finished[oid] == self.config.actor_rollout_ref.rollout.n:
                                     filtered_batch.extend(finished_batch[oid])
+                                if len(filtered_batch) >= self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n:
+                                    break
                             filtered_batch = batch_collate_fn(filtered_batch)
                         else:
                             filtered_batch = batch

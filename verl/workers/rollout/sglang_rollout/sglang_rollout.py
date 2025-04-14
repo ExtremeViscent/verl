@@ -372,6 +372,7 @@ class SGLangRollout(BaseRollout):
     def prepare_batch(self, rid_map):
         idx_list = []
         rids = []
+        sampling_params_list = []
         flat_group_cache = [v for cache_dict in self.group_cache.values() for v in cache_dict.values()]
         for v in flat_group_cache:
             old_rid = v['rid']
@@ -380,17 +381,22 @@ class SGLangRollout(BaseRollout):
             v['rid'] = new_rid
             self.group_cache[oid].pop(old_rid)
             self.group_cache[oid][new_rid] = v
+            sampling_params = self.sampling_params.copy()
+            sampling_params['n'] = 1
             # Prepare inputs for the engine
             if not v['finished']:
                 processed_idx = v['processed_idx']
                 if self.partial_rollout:
-                    processed_idx.extend(self.convert_logprob_to_output_id(v['output']['meta_info']['output_token_logprobs']))
+                    cached_ids = self.convert_logprob_to_output_id(v['output']['meta_info']['output_token_logprobs'])
+                    sampling_params['max_new_tokens'] = max(sampling_params.get('max_new_tokens', 1) - len(cached_ids), 1)
+                    processed_idx.extend(cached_ids)
                 idx_list.append(processed_idx)
                 rids.append(new_rid)
+                sampling_params_list.append(sampling_params)
         oids = [rid.split('_nid')[0] for rid in rids]
         num_oids = len(set(oids))
 
-        return idx_list, rids, num_oids
+        return idx_list, rids, num_oids, sampling_params_list
 
     def convert_output_id_to_logprob(self, output_ids):
         log_probs = []
@@ -420,6 +426,7 @@ class SGLangRollout(BaseRollout):
                     new_log_probs = self.convert_output_id_to_logprob(output.get('output_ids', []))
                 cached_log_probs = cache[oid][rid]['output']['meta_info']['output_token_logprobs']
                 cached_log_probs.extend(new_log_probs)
+                cached_log_probs = cached_log_probs[:self.sampling_params.get('max_new_tokens', 1024)]
                 cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = cached_log_probs
         ret = []
         idx = []
@@ -454,7 +461,7 @@ class SGLangRollout(BaseRollout):
         attention_mask = []
         position_ids = []
         rid_map = rid_map.meta_info['rid_map']
-        idx_list, rids, num_oids = self.prepare_batch(rid_map)
+        idx_list, rids, num_oids, sampling_params_list = self.prepare_batch(rid_map)
         print(f"num_oids: {num_oids}, batch_size: {batch_size}, fed ids: {len(idx_list)}")
         num_returns = min(num_oids, batch_size)
         do_sample = self.group_meta.get('do_sample', True)
@@ -487,7 +494,7 @@ class SGLangRollout(BaseRollout):
             print(f"{self.sampling_params=}")
             outputs = self.inference_engine.generate(
                 prompt=None,  # because we have already convert it to prompt token id
-                sampling_params=self.sampling_params,
+                sampling_params=sampling_params_list,
                 return_logprob=True,
                 input_ids=idx_list,
                 rid=rids,

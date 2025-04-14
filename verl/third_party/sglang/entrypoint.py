@@ -136,9 +136,6 @@ class CustomEngine(Engine):
             batch_size = len(input_ids)
         loop = asyncio.get_event_loop()
         
-        n = sampling_params.get("n", 1) if sampling_params is not None else 1
-        sampling_params_ = sampling_params.copy()
-        sampling_params_['n'] = 1
         assert num_returns is not None, "num_returns should be provided"
         assert rid is not None, "rid should be provided"
 
@@ -153,17 +150,17 @@ class CustomEngine(Engine):
             tasks[oid] = {}
         for i, rid in enumerate(all_rids):
             oid = rid.split('_nid')[0]
-            tmp_sampling_params = sampling_params_.copy()
-            max_new_tokens = sampling_params_.get('max_new_tokens', 16*1024)
-            max_length = 18 * 1024
-            context_length = len(input_ids[i])
-            max_new_tokens = min(max_new_tokens, max_length - context_length)
-            max_new_tokens = max(max_new_tokens, 1)
-            tmp_sampling_params['max_new_tokens'] = max_new_tokens
+            # tmp_sampling_params = sampling_params_.copy()
+            # max_new_tokens = sampling_params_.get('max_new_tokens', 16*1024)
+            # max_length = 18 * 1024
+            # context_length = len(input_ids[i])
+            # max_new_tokens = min(max_new_tokens, max_length - context_length)
+            # max_new_tokens = max(max_new_tokens, 1)
+            # tmp_sampling_params['max_new_tokens'] = max_new_tokens
             objs[oid][rid] = GenerateReqInput(
                 text=None,
                 input_ids=input_ids[i],
-                sampling_params=tmp_sampling_params,
+                sampling_params=sampling_params[i],
                 image_data=None,
                 return_logprob=return_logprob,
                 logprob_start_len=logprob_start_len,
