@@ -435,6 +435,7 @@ class SGLangRollout(BaseRollout):
                         finished_oids.append(oid)
         self.group_cache = cache
         return ret, idx, attention_mask, position_ids, rids, finished_oids, finished_rids
+
     @torch.no_grad()
     def generate_sequences_ingroup(self, rid_map: DataProto, **kwargs) -> DataProto:
         # if self.config.free_cache_engine:
