@@ -947,16 +947,18 @@ class RayPPOTrainer(object):
                     rids = []
                     rid_to_batch = {}
                     rids_tensor = []
-                    for i in range(macro_gen_batch.batch['input_ids'].size(0)):
+                    for i in range(len(macro_gen_batch)):
                         oid = f"req_{uuid4().hex[:8]}"
                         rids.append([])
+                        rids_tensor.append([])
                         for j in range(self.config.actor_rollout_ref.rollout.n):
                             rid = f"{oid}_nid{uuid4().hex[:8]}"
                             rids[-1].append(rid)
                             rid_to_batch[rid] = i
-                            rids_tensor.append(encode_string_to_tensor(rid))
-                    macro_gen_batch.batch['rids'] = torch.tensor(rids_tensor)
-                    macro_batch.batch['rids'] = torch.tensor(rids_tensor)
+                            rids_tensor[-1].append(encode_string_to_tensor(rid))
+                        rids_tensor[-1] = torch.stack(rids_tensor[-1], dim=0)
+                    macro_gen_batch.batch['rids'] = torch.stack(rids_tensor, dim=0)
+                    macro_batch.batch['rids'] = torch.stack(rids_tensor, dim=0)
                     # Set hyper-parameters for group shuffle
                     n_groups = self.config.actor_rollout_ref.rollout.get('n_groups', 4)
                     macro_gen_batch.meta_info['n_groups'] = n_groups
