@@ -920,8 +920,16 @@ class RayPPOTrainer(object):
                     )
 
                 if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
-                    gids = torch.arange(macro_gen_batch.batch['input_ids'].size(0))
-                    macro_gen_batch.batch['gids'] = gids
+                    rids = []
+                    rid_to_batch = {}
+                    for i in range(macro_gen_batch.batch['input_ids'].size(0)):
+                        oid = f"req_{i}"
+                        rids.append([])
+                        for j in range(self.config.actor_rollout_ref.rollout.n):
+                            rid = f"{oid}_nid{uuid4().hex[:8]}"
+                            rids[-1].append(rid)
+                            rid_to_batch[rid] = i
+                    macro_gen_batch.non_tensor_batch['rids'] = np.array(rids, dtype=object)
                     n_groups = self.config.actor_rollout_ref.rollout.get('n_groups', 4)
                     macro_gen_batch.meta_info['n_groups'] = n_groups
                     macro_gen_batch.meta_info['group_shuffle'] = True
@@ -938,8 +946,8 @@ class RayPPOTrainer(object):
                     batch = macro_batch
                     gen_batch = macro_gen_batch
                     n_iter = 1
-                old_logprob_cache = {}
-                old_ids_cache = {}
+                cached_ids = {}
+                cached_old_log_probs = {}
                 for k in range(n_iter):
                     is_last_step = self.global_steps >= self.total_training_steps
 
@@ -949,17 +957,25 @@ class RayPPOTrainer(object):
                             if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) \
                                 or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
-                                # gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
                                 batch = []
+                                # Map rids
+                                rid_map = gen_batch_output.non_tensor_batch['rid_map']
+                                for (old_rid, new_rid) in rid_map:
+                                    rid_to_batch[new_rid] = rid_to_batch.pop(old_rid)
+                                    if self.config.actor_rollout_ref.rollout.get('parallel_rollout', False):
+                                        cached_ids[new_rid] = cached_ids.pop(old_rid, [])
+                                        cached_old_log_probs[new_rid] = cached_old_log_probs.pop(old_rid, [])
                                 stride = self.config.actor_rollout_ref.rollout.n
-                                if getattr(self.config.actor_rollout_ref.rollout, 'partial_rollout', False):
-                                    cached_outputs = gen_batch_output.pop(meta_info_keys=['cached_outputs']).meta_info['cached_outputs']
-                                    for rid, cached_ids in cached_outputs.items():
-                                        old_ids_cache[rid] = cached_ids
                                 for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
-                                    gid = gen_batch_output.batch['gids'][i].item()
-                                    batch.append(macro_batch[gid])
+                                    rid = gen_batch_output.non_tensor_batch['rids'][i]
+                                    batch.append(macro_batch[rid_to_batch[rid]])
                                 batch = batch_collate_fn(batch)
+                                if self.config.actor_rollout_ref.rollout.get('parallel_rollout', False):
+                                    cached_outputs = gen_batch_output.non_tensor_batch['cached_outputs']
+                                    for cached_output in cached_outputs:
+                                        if cached_output is not None:
+                                            rid, cached_ids_output = cached_output
+                                            cached_ids[rid] = cached_ids_output
                             else:
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
                                 # gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
@@ -987,6 +1003,12 @@ class RayPPOTrainer(object):
 
                         # compute old_log_probs_cache
                         with _timer('old_log_prob_cache', timing_raw):
+                            cache_batch = []
+                            for rid, cached_ids in cached_ids.items():
+                                original_batch = macro_batch[rid_to_batch[rid]]
+                                
+                            
+
                             
 
                         if self.use_reference_policy:

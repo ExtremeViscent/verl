@@ -13,7 +13,9 @@
 # limitations under the License.
 """Utilities for distributed training."""
 import os
-import pickle
+import pickle    
+import torch
+import torch.distributed as dist
 
 
 def initialize_global_process_group(timeout_second=36000):
@@ -29,9 +31,6 @@ def initialize_global_process_group(timeout_second=36000):
     return local_rank, rank, world_size
 
 def broadcast_pyobj(data, rank, dist_group, src):
-    import torch
-    import torch.distributed as dist
-
     if rank == src:
         buffer = pickle.dumps(data)
         storage = torch.ByteStorage.from_buffer(buffer)
@@ -47,3 +46,31 @@ def broadcast_pyobj(data, rank, dist_group, src):
         dist.broadcast(tensor, src=src, group=dist_group)
         buffer = tensor.numpy().tobytes()
         return pickle.loads(buffer)
+
+def allgather_pyobj(data, world_size, dist_group):
+    # Serialize the object to bytes
+    buffer = pickle.dumps(data)
+    byte_storage = torch.ByteStorage.from_buffer(buffer)
+    local_tensor = torch.ByteTensor(byte_storage)
+    local_size = torch.LongTensor([local_tensor.numel()])
+
+    # Gather all sizes first
+    size_list = [torch.LongTensor([0]) for _ in range(world_size)]
+    dist.all_gather(size_list, local_size, group=dist_group)
+    max_size = max(size.item() for size in size_list)
+
+    # Pad the tensor to the max size
+    if local_tensor.numel() != max_size:
+        padding = torch.ByteTensor(size=(max_size - local_tensor.numel(),))
+        local_tensor = torch.cat((local_tensor, padding), dim=0)
+
+    # Gather all tensors
+    tensor_list = [torch.ByteTensor(size=(max_size,)) for _ in range(world_size)]
+    dist.all_gather(tensor_list, local_tensor, group=dist_group)
+
+    # Deserialize
+    output = []
+    for i in range(world_size):
+        buffer_i = tensor_list[i][:size_list[i].item()].numpy().tobytes()
+        output.append(pickle.loads(buffer_i))
+    return output

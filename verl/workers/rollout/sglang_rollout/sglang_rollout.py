@@ -318,34 +318,16 @@ class SGLangRollout(BaseRollout):
         idx = prompts.batch['input_ids']
         attention_mask = prompts.batch['attention_mask']
         position_ids = prompts.batch['position_ids']
-        gids = prompts.batch['gids']
+        all_rids = prompts.non_tensor_batch['rids']
         bsz = prompts.batch['input_ids'].size(0)
         n = kwargs.get('n', self.config.n)
 
-        # Generate rids
-        all_rids = {}
-        for i in range(bsz):
-            oid = f"req_{i}_{gids[i]}"
-            all_rids[oid] = []
-            for j in range(n):
-                nid = f"{oid}_nid{uuid4().hex[:8]}"
-                all_rids[oid].append(nid)
-
-        # Sync the rids across all the tp ranks
-        all_rids = broadcast_pyobj(
-            data=all_rids,
-            rank=torch.distributed.get_rank(),
-            dist_group=self.inference_engine._device_mesh_cpu.get_group(),
-            src=self.inference_engine._device_mesh_cpu.mesh[0].item(),
-        )
-
-        for i in range(bsz):
+        for i, rids in enumerate(all_rids):
             idx = prompts.batch['input_ids'][i]
             attention_mask = prompts.batch['attention_mask'][i]
             position_ids = prompts.batch['position_ids'][i]
             idx_ = _pre_process_inputs(self.pad_token_id, idx)
-            gid = gids[i]
-            oid = f"req_{i}_{gid}"
+            oid = rids[0].split('_nid')[0]
             self.group_cache[oid] = {}
             for j in range(n):
                 rid = all_rids[oid][j]
@@ -354,9 +336,12 @@ class SGLangRollout(BaseRollout):
                     'processed_idx': idx_,
                     'attention_mask': attention_mask,
                     'position_ids': position_ids,
-                    'gid': gid,
                     'rid': rid,
-                    'output': None,
+                    'output': {
+                        "meta_info": {
+                            "output_token_logprobs": [],
+                        },
+                    }
                 }
         self.group_meta = prompts.meta_info
         if prompts.meta_info.get('group_shuffle', False):
@@ -366,14 +351,15 @@ class SGLangRollout(BaseRollout):
             n_over = prompts.meta_info['n_over']
             self.mini_bsz = bsz // n_over
 
-    @torch.no_grad()
-    def get_cached_outputs(self):
-        cache_dict = {}
-        for oid, cache_dict in self.group_cache.items():
-            for rid, cached_state in cache_dict.items():
-                if cached_state.get('cached_ids', None) is not None:
-                    cache_dict[rid] = cached_state['cached_ids']
-        return cache_dict
+    def pad_non_tensor_batch(self, non_tensor_batch, batch_size):
+        new_non_tensor_batch = {}
+        for key, value in non_tensor_batch.items():
+            value_ = []
+            pad_length = (len(value) // batch_size + 1) * batch_size - len(value)
+            value_.extend(value)
+            value_.extend([None for _ in range(pad_length)])
+            new_non_tensor_batch[key] = value_
+        return new_non_tensor_batch
         
     @torch.no_grad()
     def prepare_batch(self):
@@ -407,8 +393,13 @@ class SGLangRollout(BaseRollout):
             v = self.group_cache[oid].pop(old_rid)
             v['rid'] = new_rid
             self.group_cache[oid][new_rid] = v
+        
+        rid_map_list = []
+        for old_rid, new_rid in rid_map.items():
+            rid_map_list.append((old_rid, new_rid))
+        rid_map_list = np.array(rid_map_list)
 
-        return idx_list, rids, num_oids
+        return idx_list, rids, num_oids, rid_map_list
 
     def convert_output_id_to_logprob(self, output_ids):
         log_probs = []
@@ -423,42 +414,34 @@ class SGLangRollout(BaseRollout):
         for oid, out_dict in output.items():
             for rid, output in out_dict.items():
                 finish_reason = output['meta_info']['finish_reason']
-                finished = finish_reason['type'] != 'abort'
-                if finished:
-                    if self.partial_rollout:
-                        cached_log_probs = self.convert_output_id_to_logprob(self.group_cache[oid][rid].get('cached_ids', []))
-                        output['output_token_logprobs'] = output.get('output_token_logprobs', []) + cached_log_probs
-                    cache[oid][rid]['output'] = output
-                elif self.partial_rollout:
-                    cache[oid][rid]['cached_ids'] = output.get('output_ids', [])
+                if not cache[oid][rid]['finished']:
+                    finished = finish_reason['type'] != 'abort'
+                    cache[oid][rid]['finished'] = finished
+                new_log_probs = self.convert_output_id_to_logprob(output.get('output_ids', []))
+                cached_log_probs = cache[oid][rid]['output']['meta_info']['output_token_logprobs']
+                cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = cached_log_probs.extend(new_log_probs)
         ret = []
         idx = []
         attention_mask = []
         position_ids = []
-        gids = []
         rids = []
-        flat_group_cache = [v for cache_dict in cache.values() for v in cache_dict.values()]
         n_finished = {}
-        finished_cache = {}
-        for v in flat_group_cache:
-            rid = v['rid']
-            oid = rid.split('_nid')[0]
-            if v['output'] is not None:
-                n_finished[oid] = n_finished.get(oid, 0) + 1
-                if n_finished[oid] == len(cache[oid]):
-                    finished_cache[oid] = cache.pop(oid)
-            if len(finished_cache.keys()) >= batch_size:
-                break
-        for oid, cache_dict in finished_cache.items():
-            ret.extend([v['output'] for v in cache_dict.values()])
-            idx.extend([v['idx'] for v in cache_dict.values()])
-            attention_mask.extend([v['attention_mask'] for v in cache_dict.values()])
-            position_ids.extend([v['position_ids'] for v in cache_dict.values()])
-            gids.extend([v['gid'] for v in cache_dict.values()])
-            rids.extend([v['rid'] for v in cache_dict.values()])
+        finished_oids = []
+        finished_rids = []
+        for oid, cache_dict in cache.items():
+            for rid, v in cache_dict.items():
+                ret.append(v['output'])
+                idx.append(v['idx'])
+                attention_mask.append(v['attention_mask'])
+                position_ids.append(v['position_ids'])
+                rids.append(v['rid'])
+                if v['finished']:
+                    n_finished[oid] = n_finished.get(oid, 0) + 1
+                    finished_rids.append(rid)
+                    if n_finished[oid] == len(cache[oid]) and len(finished_oids) < batch_size:
+                        finished_oids.append(oid)
         self.group_cache = cache
-        return ret, idx, attention_mask, position_ids, gids, rids
-    
+        return ret, idx, attention_mask, position_ids, rids, finished_oids, finished_rids
     @torch.no_grad()
     def generate_sequences_ingroup(self, **kwargs) -> DataProto:
         # if self.config.free_cache_engine:
@@ -466,8 +449,7 @@ class SGLangRollout(BaseRollout):
         idx_list = []
         attention_mask = []
         position_ids = []
-        gids = []
-        idx_list, rids, num_oids = self.prepare_batch()
+        idx_list, rids, num_oids, rid_map = self.prepare_batch()
         print(f"num_oids: {num_oids}, batch_size: {batch_size}, fed ids: {len(idx_list)}")
         num_returns = min(num_oids, batch_size)
         do_sample = self.group_meta.get('do_sample', True)
@@ -506,12 +488,14 @@ class SGLangRollout(BaseRollout):
                 rid=rids,
                 num_returns=num_returns,
             )
-            output, idx, attention_mask, position_ids, gids = self.collate_responses(outputs, batch_size)
+            output, idx, attention_mask, position_ids, rids, finished_oids, finished_rids = self.collate_responses(outputs, batch_size)
             device_ = idx[0].device
             idx = torch.stack(idx, dim=0).to(device_)
             attention_mask = torch.stack(attention_mask, dim=0)
             position_ids = torch.stack(position_ids, dim=0)
-            gids = torch.stack(gids, dim=0).cpu()
+            rids = np.array(rids)
+            finished_oids = np.array(finished_oids)
+            finished_rids = np.array(finished_rids)
                 
         out = _post_process_outputs(self.tokenizer, output)
 
@@ -551,16 +535,16 @@ class SGLangRollout(BaseRollout):
                 # 'old_log_probs': log_probs, # we will recompute old log prob with actor
                 "attention_mask": attention_mask,
                 "position_ids": position_ids,
-                "gids": gids,
             },
             batch_size=batch_size,
         )
         non_tensor_batch = {
             "rids": rids,
+            "rid_map": rid_map,
+            "finished_oids": finished_oids,
+            "finished_rids": finished_rids,
         }
-        meta_info = {
-            "cached_outputs": self.get_cached_outputs(),
-        }
+        non_tensor_batch = self.pad_non_tensor_batch(non_tensor_batch, batch_size)
 
         # free cache engine
         if self.config.free_cache_engine and self.inference_engine._engine is not None:
@@ -568,4 +552,4 @@ class SGLangRollout(BaseRollout):
 
         self.group_iter += 1
 
-        return DataProto(batch=batch, non_tensor_batch=non_tensor_batch, meta_info=meta_info)
+        return DataProto(batch=batch, non_tensor_batch=non_tensor_batch)
