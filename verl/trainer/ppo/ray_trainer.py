@@ -245,9 +245,9 @@ def update_rids(macro_batch, rid_to_batch):
             oid = rid.split('_nid')[0]
             new_rid = f"{oid}_nid{uuid4().hex[:8]}"
             new_rids[-1].append(new_rid)
+            rid_to_batch[new_rid] = rid_to_batch.pop(rid)
             new_rid = encode_string_to_tensor(new_rid)
             new_rids_tensor[-1].append(new_rid)
-            rid_to_batch[new_rid] = rid_to_batch.pop(rid)
     macro_batch.batch['rids'] = torch.stack(new_rids_tensor, dim=0)
     return macro_batch, new_rids, rid_to_batch
     
@@ -984,30 +984,24 @@ class RayPPOTrainer(object):
                                 or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
                                 batch = []
-                                for (old_rid, new_rid) in rid_map:
-                                    rid_to_batch[new_rid] = rid_to_batch.pop(old_rid)
-                                    if self.config.actor_rollout_ref.rollout.get('parallel_rollout', False):
-                                        cached_ids[new_rid] = cached_ids.pop(old_rid, [])
-                                        cached_old_log_probs[new_rid] = cached_old_log_probs.pop(old_rid, [])
-                                stride = self.config.actor_rollout_ref.rollout.n
-                                for i in range(0,gen_batch_output.batch['input_ids'].size(0), stride):
-                                    rid = gen_batch_output.non_tensor_batch['rids'][i]
+                                for i in range(0,gen_batch_output.batch['input_ids'].size(0)):
+                                    rid = gen_batch_output.batch['rids'][i]
+                                    rid = decode_tensor_to_string(rid)
+                                    oid = rid.split('_nid')[0]
+                                    uid = np.array([oid for _ in range(len(batch.batch))], dtype=object)
+                                    batch.non_tensor_batch['uid'] = uid
                                     batch.append(macro_batch[rid_to_batch[rid]])
                                 batch = batch_collate_fn(batch)
-                                if self.config.actor_rollout_ref.rollout.get('parallel_rollout', False):
-                                    cached_outputs = gen_batch_output.non_tensor_batch['cached_outputs']
-                                    for cached_output in cached_outputs:
-                                        if cached_output is not None:
-                                            rid, cached_ids_output = cached_output
-                                            cached_ids[rid] = cached_ids_output
                             else:
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                                batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
+                                                                dtype=object)
+                                # repeat to align with repeated responses in rollout
+                                batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                                 # gen_batch_output = self.actor_rollout_wg.sync_rollout(gen_batch_output)
 
-                        batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
-                                                                dtype=object)
-                        # repeat to align with repeated responses in rollout
-                        batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
+                        
+                        
                         batch = batch.union(gen_batch_output)
 
                         # balance the number of valid tokens on each dp rank.
@@ -1031,7 +1025,7 @@ class RayPPOTrainer(object):
                             for rid, cached_ids in cached_ids.items():
                                 original_batch = macro_batch[rid_to_batch[rid]]
 
-                            
+                        # Filter out finished requests
 
                             
 
