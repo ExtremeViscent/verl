@@ -523,3 +523,9 @@ def get_unpad_data(attention_mask):
         cu_seqlens,
         max_seqlen_in_batch,
     )
+
+def encode_string_to_tensor(string):
+    return torch.tensor(list(string), dtype=torch.long)
+
+def decode_tensor_to_string(tensor):
+    return ''.join([chr(int(i)) for i in tensor])

@@ -47,6 +47,8 @@ from verl.utils.dataset.rl_dataset import RLHFDataset, collate_fn
 from verl.utils.tracking import ValidationGenerationsLogger
 from torch.utils.data import RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
+from uuid import uuid4
+from verl.utils.torch_functional import encode_string_to_tensor, decode_tensor_to_string
 
 WorkerType = Type[Worker]
 
@@ -230,6 +232,25 @@ def _timer(name: str, timing_raw: Dict[str, float]):
     with Timer(name=name, logger=None) as timer:
         yield
     timing_raw[name] = timer.last
+
+def update_rids(macro_batch, rid_to_batch):
+    old_rids = macro_batch.batch['rids']
+    new_rids = []
+    new_rids_tensor = []
+    for rid_list in old_rids:
+        new_rids.append([])
+        new_rids_tensor.append([])
+        for rid in rid_list:
+            rid = decode_tensor_to_string(rid)
+            oid = rid.split('_nid')[0]
+            new_rid = f"{oid}_nid{uuid4().hex[:8]}"
+            new_rids[-1].append(new_rid)
+            new_rid = encode_string_to_tensor(new_rid)
+            new_rids_tensor[-1].append(new_rid)
+            rid_to_batch[new_rid] = rid_to_batch.pop(rid)
+    macro_batch.batch['rids'] = torch.stack(new_rids_tensor, dim=0)
+    return macro_batch, new_rids, rid_to_batch
+    
 
 
 class RayPPOTrainer(object):
@@ -920,16 +941,21 @@ class RayPPOTrainer(object):
                     )
 
                 if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+                    # Prepare rids for group shuffle
                     rids = []
                     rid_to_batch = {}
+                    rids_tensor = []
                     for i in range(macro_gen_batch.batch['input_ids'].size(0)):
-                        oid = f"req_{i}"
+                        oid = f"req_{uuid4().hex[:8]}"
                         rids.append([])
                         for j in range(self.config.actor_rollout_ref.rollout.n):
                             rid = f"{oid}_nid{uuid4().hex[:8]}"
                             rids[-1].append(rid)
                             rid_to_batch[rid] = i
-                    macro_gen_batch.non_tensor_batch['rids'] = np.array(rids, dtype=object)
+                            rids_tensor.append(encode_string_to_tensor(rid))
+                    macro_gen_batch.batch['rids'] = torch.tensor(rids_tensor)
+                    macro_batch.batch['rids'] = torch.tensor(rids_tensor)
+                    # Set hyper-parameters for group shuffle
                     n_groups = self.config.actor_rollout_ref.rollout.get('n_groups', 4)
                     macro_gen_batch.meta_info['n_groups'] = n_groups
                     macro_gen_batch.meta_info['group_shuffle'] = True
@@ -958,8 +984,6 @@ class RayPPOTrainer(object):
                                 or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup()
                                 batch = []
-                                # Map rids
-                                rid_map = gen_batch_output.non_tensor_batch['rid_map']
                                 for (old_rid, new_rid) in rid_map:
                                     rid_to_batch[new_rid] = rid_to_batch.pop(old_rid)
                                     if self.config.actor_rollout_ref.rollout.get('parallel_rollout', False):
@@ -1006,7 +1030,7 @@ class RayPPOTrainer(object):
                             cache_batch = []
                             for rid, cached_ids in cached_ids.items():
                                 original_batch = macro_batch[rid_to_batch[rid]]
-                                
+
                             
 
                             

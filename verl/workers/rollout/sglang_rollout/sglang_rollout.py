@@ -42,6 +42,7 @@ from verl.third_party.sglang.entrypoint import VerlEngine
 from torch.distributed.device_mesh import init_device_mesh
 from sglang.srt.sampling.sampling_params import SamplingParams
 from verl.utils.distributed import broadcast_pyobj
+from verl.utils.torch_functional import encode_string_to_tensor, decode_tensor_to_string
 from verl.third_party.sglang import parallel_state as sglang_ps
 import torch.distributed
 from torch.nn.utils.rnn import pad_sequence
@@ -362,50 +363,40 @@ class SGLangRollout(BaseRollout):
         return new_non_tensor_batch
         
     @torch.no_grad()
-    def prepare_batch(self):
+    def prepare_batch(self, rid_map):
         idx_list = []
         rids = []
         flat_group_cache = [v for cache_dict in self.group_cache.values() for v in cache_dict.values()]
-        rid_map = {}
         for v in flat_group_cache:
-            if v['output'] is None or not self.partial_rollout:
-                rid = v['rid']
-                oid = rid.split('_nid')[0]
-                rid_ = f'{oid}_nid{uuid4().hex[:8]}'
-                rid_map[rid] = rid_
-                # Prepare inputs for the engine
+            old_rid = v['rid']
+            oid = old_rid.split('_nid')[0]
+            new_rid = rid_map[old_rid]
+            v['rid'] = new_rid
+            self.group_cache[oid].pop(old_rid)
+            self.group_cache[oid][new_rid] = v
+            # Prepare inputs for the engine
+            if not v['finished']:
                 processed_idx = v['processed_idx']
                 if self.partial_rollout:
-                    processed_idx.extend(v.get('cached_ids', []))
+                    processed_idx.extend(self.convert_logprob_to_output_id(v['output']['meta_info']['output_token_logprobs']))
                 idx_list.append(processed_idx)
-                rids.append(rid_)
+                rids.append(new_rid)
         oids = [rid.split('_nid')[0] for rid in rids]
         num_oids = len(set(oids))
-        # Sync the rids across all the tp ranks
-        rid_map = broadcast_pyobj(
-            data=rid_map,
-            rank=torch.distributed.get_rank(),
-            dist_group=self.inference_engine._device_mesh_cpu.get_group(),
-            src=self.inference_engine._device_mesh_cpu.mesh[0].item(),
-        )
-        for old_rid, new_rid in rid_map.items():
-            oid = old_rid.split('_nid')[0]
-            v = self.group_cache[oid].pop(old_rid)
-            v['rid'] = new_rid
-            self.group_cache[oid][new_rid] = v
-        
-        rid_map_list = []
-        for old_rid, new_rid in rid_map.items():
-            rid_map_list.append((old_rid, new_rid))
-        rid_map_list = np.array(rid_map_list)
 
-        return idx_list, rids, num_oids, rid_map_list
+        return idx_list, rids, num_oids
 
     def convert_output_id_to_logprob(self, output_ids):
         log_probs = []
         for output_id in output_ids:
             log_probs.append((0., output_id, None))
         return log_probs
+
+    def convert_logprob_to_output_id(self, log_probs):
+        output_ids = []
+        for _, output_id, _ in log_probs:
+            output_ids.append(output_id)
+        return output_ids
     
 
     @torch.no_grad
@@ -428,6 +419,7 @@ class SGLangRollout(BaseRollout):
         n_finished = {}
         finished_oids = []
         finished_rids = []
+        finished = []
         for oid, cache_dict in cache.items():
             for rid, v in cache_dict.items():
                 ret.append(v['output'])
@@ -435,6 +427,7 @@ class SGLangRollout(BaseRollout):
                 attention_mask.append(v['attention_mask'])
                 position_ids.append(v['position_ids'])
                 rids.append(v['rid'])
+                finished.append(v['finished'])
                 if v['finished']:
                     n_finished[oid] = n_finished.get(oid, 0) + 1
                     finished_rids.append(rid)
@@ -443,13 +436,14 @@ class SGLangRollout(BaseRollout):
         self.group_cache = cache
         return ret, idx, attention_mask, position_ids, rids, finished_oids, finished_rids
     @torch.no_grad()
-    def generate_sequences_ingroup(self, **kwargs) -> DataProto:
+    def generate_sequences_ingroup(self, rid_map: DataProto, **kwargs) -> DataProto:
         # if self.config.free_cache_engine:
         batch_size = min(self.mini_bsz, len(self.group_cache))
         idx_list = []
         attention_mask = []
         position_ids = []
-        idx_list, rids, num_oids, rid_map = self.prepare_batch()
+        rid_map = rid_map.meta_info['rid_map']
+        idx_list, rids, num_oids = self.prepare_batch(rid_map)
         print(f"num_oids: {num_oids}, batch_size: {batch_size}, fed ids: {len(idx_list)}")
         num_returns = min(num_oids, batch_size)
         do_sample = self.group_meta.get('do_sample', True)
@@ -493,7 +487,12 @@ class SGLangRollout(BaseRollout):
             idx = torch.stack(idx, dim=0).to(device_)
             attention_mask = torch.stack(attention_mask, dim=0)
             position_ids = torch.stack(position_ids, dim=0)
+            finished = torch.stack(finished, dim=0)
             rids = np.array(rids)
+            rids_tensor = []
+            for rid in rids:
+                rids_tensor.append(encode_string_to_tensor(rid))
+            rids_tensor = torch.stack(rids_tensor, dim=0)
             finished_oids = np.array(finished_oids)
             finished_rids = np.array(finished_rids)
                 
@@ -535,16 +534,11 @@ class SGLangRollout(BaseRollout):
                 # 'old_log_probs': log_probs, # we will recompute old log prob with actor
                 "attention_mask": attention_mask,
                 "position_ids": position_ids,
+                "finished": finished,
+                "rids": rids_tensor,
             },
             batch_size=batch_size,
         )
-        non_tensor_batch = {
-            "rids": rids,
-            "rid_map": rid_map,
-            "finished_oids": finished_oids,
-            "finished_rids": finished_rids,
-        }
-        non_tensor_batch = self.pad_non_tensor_batch(non_tensor_batch, batch_size)
 
         # free cache engine
         if self.config.free_cache_engine and self.inference_engine._engine is not None:
@@ -552,4 +546,4 @@ class SGLangRollout(BaseRollout):
 
         self.group_iter += 1
 
-        return DataProto(batch=batch, non_tensor_batch=non_tensor_batch)
+        return DataProto(batch=batch)

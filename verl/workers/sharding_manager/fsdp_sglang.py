@@ -139,7 +139,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
                                                 world_size=self.device_mesh["infer_tp"].mesh.size()[0],
                                                 dist_group=self.device_mesh["infer_tp"].get_group())
         if tp_size > 1:
-            non_tensor_batch = np.concatenate(data.non_tensor_batch, axis=0)
+            data.non_tensor_batch = np.concatenate(data.non_tensor_batch, axis=0)
         return data
 
     def postprocess_data(self, data: DataProto) -> DataProto:
