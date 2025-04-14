@@ -1019,27 +1019,34 @@ class RayPPOTrainer(object):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
                             batch = batch.union(old_log_prob)
 
-                        # compute old_log_probs_cache
-                        with _timer('old_log_prob_cache', timing_raw):
-                            cache_batch = []
-                            for rid, cached_ids in cached_ids.items():
-                                original_batch = macro_batch[rid_to_batch[rid]]
-
                         # Filter out finished requests
-
-                            
+                        n_finished = {}
+                        finished_batch = {}
+                        filtered_batch = []
+                        for i, rid in enumerate(batch.batch['rids']):
+                            rid = decode_tensor_to_string(rid)
+                            oid = rid.split('_nid')[0]
+                            if oid not in n_finished:
+                                n_finished[oid] = 0
+                                finished_batch[oid] = []
+                            if batch.batch['finished'][i]:
+                                n_finished[oid] += 1
+                                finished_batch[oid].append(i)
+                            if n_finished[oid] == self.config.actor_rollout_ref.rollout.n:
+                                filtered_batch.extend(finished_batch[oid])
+                        filtered_batch = batch_collate_fn(filtered_batch)
 
                         if self.use_reference_policy:
                             # compute reference log_prob
                             with _timer('ref', timing_raw):
-                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                                batch = batch.union(ref_log_prob)
+                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(filtered_batch)
+                                filtered_batch = filtered_batch.union(ref_log_prob)
 
                         # compute values
                         if self.use_critic:
                             with _timer('values', timing_raw):
-                                values = self.critic_wg.compute_values(batch)
-                                batch = batch.union(values)
+                                values = self.critic_wg.compute_values(filtered_batch)
+                                filtered_batch = filtered_batch.union(values)
 
                         with _timer('adv', timing_raw):
                             # compute scores. Support both model and function-based.
@@ -1047,36 +1054,36 @@ class RayPPOTrainer(object):
                             # the results from reward model and rule-based results.
                             if self.use_rm:
                                 # we first compute reward model score
-                                reward_tensor = self.rm_wg.compute_rm_score(batch)
-                                batch = batch.union(reward_tensor)
+                                reward_tensor = self.rm_wg.compute_rm_score(filtered_batch)
+                                filtered_batch = filtered_batch.union(reward_tensor)
 
                             # we combine with rule-based rm
                             reward_extra_infos_dict: dict[str, list]
                             try:
-                                reward_result = self.reward_fn(batch, return_dict=True)
+                                reward_result = self.reward_fn(filtered_batch, return_dict=True)
                                 reward_tensor = reward_result['reward_tensor']
                                 reward_extra_infos_dict = reward_result['reward_extra_info']
                             except Exception as e:
                                 print(f'Error in reward_fn: {e}')
-                                reward_tensor = self.reward_fn(batch)
+                                reward_tensor = self.reward_fn(filtered_batch)
                                 reward_extra_infos_dict = {}
 
-                            batch.batch['token_level_scores'] = reward_tensor
+                            filtered_batch.batch['token_level_scores'] = reward_tensor
 
                             # compute rewards. apply_kl_penalty if available
                             print(f'{list(reward_extra_infos_dict.keys())=}')
                             if reward_extra_infos_dict:
-                                batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
+                                filtered_batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
                             if not self.config.actor_rollout_ref.actor.get('use_kl_loss', False):
-                                batch, kl_metrics = apply_kl_penalty(batch,
+                                filtered_batch, kl_metrics = apply_kl_penalty(filtered_batch,
                                                                     kl_ctrl=self.kl_ctrl,
                                                                     kl_penalty=self.config.algorithm.kl_penalty)
                                 metrics.update(kl_metrics)
                             else:
-                                batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
+                                filtered_batch.batch['token_level_rewards'] = filtered_batch.batch['token_level_scores']
 
                             # compute advantages, executed on the driver process
-                            batch = compute_advantage(batch,
+                            filtered_batch = compute_advantage(filtered_batch,
                                                     adv_estimator=self.config.algorithm.adv_estimator,
                                                     gamma=self.config.algorithm.gamma,
                                                     lam=self.config.algorithm.lam,
@@ -1085,7 +1092,7 @@ class RayPPOTrainer(object):
                         # update critic
                         if self.use_critic:
                             with _timer('update_critic', timing_raw):
-                                critic_output = self.critic_wg.update_critic(batch)
+                                critic_output = self.critic_wg.update_critic(filtered_batch)
                             critic_output_metrics = reduce_metrics(critic_output.meta_info['metrics'])
                             metrics.update(critic_output_metrics)
 
@@ -1093,7 +1100,7 @@ class RayPPOTrainer(object):
                         if self.config.trainer.critic_warmup <= self.global_steps:
                             # update actor
                             with _timer('update_actor', timing_raw):
-                                actor_output = self.actor_rollout_wg.update_actor(batch)
+                                actor_output = self.actor_rollout_wg.update_actor(filtered_batch)
                             actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
                             metrics.update(actor_output_metrics)
 
@@ -1112,11 +1119,11 @@ class RayPPOTrainer(object):
                                 self._save_checkpoint()
 
                     # collect metrics
-                    metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
-                    metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
+                    metrics.update(compute_data_metrics(batch=filtered_batch, use_critic=self.use_critic))
+                    metrics.update(compute_timing_metrics(batch=filtered_batch, timing_raw=timing_raw))
                     # TODO: implement actual tflpo and theoretical tflpo
                     n_gpus = self.resource_pool_manager.get_n_gpus()
-                    metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
+                    metrics.update(compute_throughout_metrics(batch=filtered_batch, timing_raw=timing_raw, n_gpus=n_gpus))
 
                     # TODO: make a canonical logger that supports various backend
                     logger.log(data=metrics, step=self.global_steps)

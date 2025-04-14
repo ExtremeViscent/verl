@@ -537,7 +537,7 @@ class SGLangRollout(BaseRollout):
                 "finished": finished,
                 "rids": rids_tensor,
             },
-            batch_size=batch_size,
+            batch_size=response.size(0),
         )
 
         # free cache engine
