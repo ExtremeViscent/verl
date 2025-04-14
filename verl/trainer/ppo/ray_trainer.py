@@ -991,15 +991,16 @@ class RayPPOTrainer(object):
                                 macro_batch, rid_map, rid_to_batch = update_rids(macro_batch, rid_to_batch)
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(rid_map)
                                 batch = []
+                                uids = []
                                 for i in range(0,gen_batch_output.batch['input_ids'].size(0)):
                                     rid = gen_batch_output.batch['rids'][i]
                                     rid = decode_tensor_to_string(rid)
                                     oid = rid.split('_nid')[0]
-                                    uid = np.array([oid], dtype=object)
+                                    uids.append(oid)
                                     batch_ = macro_batch[rid_to_batch[rid]]
-                                    batch_.non_tensor_batch['uid'] = uid
                                     batch.append(batch_)
                                 batch = batch_collate_fn(batch)
+                                batch.non_tensor_batch['uid'] = np.array(uids, dtype=object)
                                 batch.pop(batch_keys=['rids'])
                             else:
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
@@ -1029,21 +1030,24 @@ class RayPPOTrainer(object):
                             batch = batch.union(old_log_prob)
 
                         # Filter out finished requests
-                        n_finished = {}
-                        finished_batch = {}
-                        filtered_batch = []
-                        for i, rid in enumerate(batch.batch['rids']):
-                            rid = decode_tensor_to_string(rid)
-                            oid = rid.split('_nid')[0]
-                            if oid not in n_finished:
-                                n_finished[oid] = 0
-                                finished_batch[oid] = []
-                            if batch.batch['finished'][i]:
-                                n_finished[oid] += 1
-                                finished_batch[oid].append(i)
-                            if n_finished[oid] == self.config.actor_rollout_ref.rollout.n:
-                                filtered_batch.extend(finished_batch[oid])
-                        filtered_batch = batch_collate_fn(filtered_batch)
+                        if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
+                            n_finished = {}
+                            finished_batch = {}
+                            filtered_batch = []
+                            for i, rid in enumerate(batch.batch['rids']):
+                                rid = decode_tensor_to_string(rid)
+                                oid = rid.split('_nid')[0]
+                                if oid not in n_finished:
+                                    n_finished[oid] = 0
+                                    finished_batch[oid] = []
+                                if batch.batch['finished'][i]:
+                                    n_finished[oid] += 1
+                                    finished_batch[oid].append(batch[i])
+                                if n_finished[oid] == self.config.actor_rollout_ref.rollout.n:
+                                    filtered_batch.extend(finished_batch[oid])
+                            filtered_batch = batch_collate_fn(filtered_batch)
+                        else:
+                            filtered_batch = batch
 
                         if self.use_reference_policy:
                             # compute reference log_prob
