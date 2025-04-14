@@ -319,19 +319,24 @@ class SGLangRollout(BaseRollout):
         idx = prompts.batch['input_ids']
         attention_mask = prompts.batch['attention_mask']
         position_ids = prompts.batch['position_ids']
-        all_rids = prompts.non_tensor_batch['rids']
+        all_rids = prompts.batch['rids']
         bsz = prompts.batch['input_ids'].size(0)
         n = kwargs.get('n', self.config.n)
+        rids = []
+        for i in range(all_rids.shape[0]):
+            rids.append([])
+            for j in range(n):
+                rids[i].append(decode_tensor_to_string(all_rids[i][j]))
 
-        for i, rids in enumerate(all_rids):
+        for i in range(bsz):
             idx = prompts.batch['input_ids'][i]
             attention_mask = prompts.batch['attention_mask'][i]
             position_ids = prompts.batch['position_ids'][i]
             idx_ = _pre_process_inputs(self.pad_token_id, idx)
-            oid = rids[0].split('_nid')[0]
+            oid = rids[i][0].split('_nid')[0]
             self.group_cache[oid] = {}
             for j in range(n):
-                rid = all_rids[oid][j]
+                rid = rids[i][j]
                 self.group_cache[oid][rid] = {
                     'idx': idx,
                     'processed_idx': idx_,
@@ -342,7 +347,8 @@ class SGLangRollout(BaseRollout):
                         "meta_info": {
                             "output_token_logprobs": [],
                         },
-                    }
+                    },
+                    'finished': False,
                 }
         self.group_meta = prompts.meta_info
         if prompts.meta_info.get('group_shuffle', False):
@@ -408,9 +414,13 @@ class SGLangRollout(BaseRollout):
                 if not cache[oid][rid]['finished']:
                     finished = finish_reason['type'] != 'abort'
                     cache[oid][rid]['finished'] = finished
-                new_log_probs = self.convert_output_id_to_logprob(output.get('output_ids', []))
+                if cache[oid][rid]['finished']:
+                    new_log_probs = output['meta_info']['output_token_logprobs']
+                else:
+                    new_log_probs = self.convert_output_id_to_logprob(output.get('output_ids', []))
                 cached_log_probs = cache[oid][rid]['output']['meta_info']['output_token_logprobs']
-                cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = cached_log_probs.extend(new_log_probs)
+                cached_log_probs.extend(new_log_probs)
+                cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = cached_log_probs
         ret = []
         idx = []
         attention_mask = []
@@ -434,7 +444,7 @@ class SGLangRollout(BaseRollout):
                     if n_finished[oid] == len(cache[oid]) and len(finished_oids) < batch_size:
                         finished_oids.append(oid)
         self.group_cache = cache
-        return ret, idx, attention_mask, position_ids, rids, finished_oids, finished_rids
+        return ret, idx, attention_mask, position_ids, rids, finished, finished_oids, finished_rids
 
     @torch.no_grad()
     def generate_sequences_ingroup(self, rid_map: DataProto, **kwargs) -> DataProto:
@@ -483,12 +493,12 @@ class SGLangRollout(BaseRollout):
                 rid=rids,
                 num_returns=num_returns,
             )
-            output, idx, attention_mask, position_ids, rids, finished_oids, finished_rids = self.collate_responses(outputs, batch_size)
+            output, idx, attention_mask, position_ids, rids, finished, finished_oids, finished_rids = self.collate_responses(outputs, batch_size)
             device_ = idx[0].device
             idx = torch.stack(idx, dim=0).to(device_)
             attention_mask = torch.stack(attention_mask, dim=0)
             position_ids = torch.stack(position_ids, dim=0)
-            finished = torch.stack(finished, dim=0)
+            finished = torch.tensor(finished)
             rids = np.array(rids)
             rids_tensor = []
             for rid in rids:
@@ -505,12 +515,13 @@ class SGLangRollout(BaseRollout):
         if response.shape[1] < self.config.response_length:
             response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
             log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
-        if self.config.n > 1 and do_sample:
+        # if self.config.n > 1 and do_sample:
         #     idx = idx.repeat_interleave(self.config.n, dim=0)
         #     attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
         #     position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
         #     gids = gids.repeat_interleave(self.config.n, dim=0)
-            batch_size = batch_size * self.config.n
+            # batch_size = batch_size * self.config.n
+        batch_size = response.size(0)
         seq = torch.cat([idx, response], dim=-1)
 
         response_length = response.size(1)

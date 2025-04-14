@@ -23,7 +23,6 @@ class CustomEngine(Engine):
 
     def gather_partial_outputs(self):
         partial_outputs = {}
-        raw_outputs = self.tokenizer_manager.orphan_outputs
         for _, recv_obj in self.tokenizer_manager.orphan_outputs.items():
             for i, rid in enumerate(recv_obj.rids):
                 if recv_obj.finished_reasons[i] and recv_obj.finished_reasons[i]['type'] == 'abort':
@@ -45,7 +44,7 @@ class CustomEngine(Engine):
             }
             outputs.append(output_dict)
         self.tokenizer_manager.orphan_outputs = {}
-        return outputs, raw_outputs
+        return outputs
 
     async def get_first_n_results(self, tasks, num_returns):
         outputs = {}

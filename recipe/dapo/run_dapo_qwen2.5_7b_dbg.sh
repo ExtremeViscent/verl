@@ -35,7 +35,7 @@ max_num_gen_batches=10
 train_prompt_bsz=32
 n_groups=4
 n_resp_per_prompt=4
-train_prompt_mini_bsz=16
+train_prompt_mini_bsz=32
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
@@ -63,7 +63,7 @@ top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Performance Related Parameter
-sp_size=4
+sp_size=1
 use_dynamic_bsz=True
 actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
 infer_ppo_max_token_len=$((max_prompt_length + max_response_length))

@@ -130,16 +130,10 @@ class FSDPSGLangShardingManager(BaseShardingManager):
 
     def preprocess_data(self, data: DataProto) -> DataProto:
         # TODO: Current impl doesn't consider FSDP with torch micro-dp
-        tp_size = self.device_mesh["infer_tp"].mesh.size()[0]
         data.batch = allgather_dict_tensors(data.batch.contiguous(),
                                             size=self.device_mesh["infer_tp"].mesh.size()[0],
                                             group=self.device_mesh["infer_tp"].get_group(),
                                             dim=0)
-        data.non_tensor_batch = allgather_pyobj(data.non_tensor_batch,
-                                                world_size=self.device_mesh["infer_tp"].mesh.size()[0],
-                                                dist_group=self.device_mesh["infer_tp"].get_group())
-        if tp_size > 1:
-            data.non_tensor_batch = np.concatenate(data.non_tensor_batch, axis=0)
         return data
 
     def postprocess_data(self, data: DataProto) -> DataProto:
@@ -149,11 +143,6 @@ class FSDPSGLangShardingManager(BaseShardingManager):
         tp_size = self.device_mesh["infer_tp"].mesh.size()[0]
         src_rank = global_rank // tp_size * tp_size
         broadcast_dict_tensor(data.batch, src=src_rank, group=self.device_mesh["infer_tp"].get_group())
-        data.non_tensor_batch = broadcast_pyobj(
-            data.non_tensor_batch, 
-            src=src_rank, 
-            dist_group=self.device_mesh["infer_tp"].get_group(), 
-            rank=global_rank)
         if tp_size > 1:
             local_prompts = data.chunk(chunks=tp_size)
             data = local_prompts[tp_rank]

@@ -250,7 +250,9 @@ def update_rids(macro_batch, rid_to_batch):
             rid_to_batch[new_rid] = rid_to_batch.pop(old_rid)
             new_rid = encode_string_to_tensor(new_rid)
             new_rids_tensor[-1].append(new_rid)
-    macro_batch.batch['rids'] = torch.tensor(new_rids_tensor, dim=0)
+        new_rids_tensor[-1] = torch.stack(new_rids_tensor[-1])
+    rid_map = DataProto(meta_info={'rid_map': rid_map})
+    macro_batch.batch['rids'] = torch.stack(new_rids_tensor)
     return macro_batch, rid_map, rid_to_batch
     
 
@@ -987,18 +989,18 @@ class RayPPOTrainer(object):
                             if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False) \
                                 or getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
                                 macro_batch, rid_map, rid_to_batch = update_rids(macro_batch, rid_to_batch)
-                                rid_map = {'rid_map': rid_map}
-                                rid_map = DataProto(meta_info=rid_map)
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences_ingroup(rid_map)
                                 batch = []
                                 for i in range(0,gen_batch_output.batch['input_ids'].size(0)):
                                     rid = gen_batch_output.batch['rids'][i]
                                     rid = decode_tensor_to_string(rid)
                                     oid = rid.split('_nid')[0]
-                                    uid = np.array([oid for _ in range(len(batch.batch))], dtype=object)
-                                    batch.non_tensor_batch['uid'] = uid
-                                    batch.append(macro_batch[rid_to_batch[rid]])
+                                    uid = np.array([oid], dtype=object)
+                                    batch_ = macro_batch[rid_to_batch[rid]]
+                                    batch_.non_tensor_batch['uid'] = uid
+                                    batch.append(batch_)
                                 batch = batch_collate_fn(batch)
+                                batch.pop(batch_keys=['rids'])
                             else:
                                 gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
                                 batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
