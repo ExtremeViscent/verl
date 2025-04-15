@@ -1053,15 +1053,29 @@ class RayPPOTrainer(object):
                         # Note that this breaks the order of data inside the batch.
                         # Please take care when you implement group based adv computation such as GRPO and rloo
                         batch.batch['response_mask'] = compute_response_mask(batch)
+                        if self.config.trainer.balance_batch:
+                            self._balance_batch(batch, metrics=metrics)
                         # Filter out non-empty responses
                         if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
                             filtered_batch = []
+                            empty_count = 0
+                            non_empty_count = 0
+                            filtered_size = []
+                            mask_sum = batch.batch['response_mask'].sum(dim=-1)
                             for i in range(len(batch)):
-                                if batch.batch['response_mask'][i].any():
+                                if batch.batch['response_mask'][i].sum() > 1:
                                     filtered_batch.append(batch[i])
+                                    filtered_size.append(batch.batch['response_mask'][i].sum())
+                                    non_empty_count += 1
+                                else:
+                                    empty_count += 1
+                            # Pad batch to be divisible by world_size
+                            pad_size = self.actor_rollout_wg.world_size - len(filtered_batch) % self.actor_rollout_wg.world_size
+                            for i in range(pad_size):
+                                filtered_batch.append(filtered_batch[0])
+                            print(f'{empty_count=}, {non_empty_count=}, {pad_size=}')
+                            print(f'{filtered_size=}')
                             batch = batch_collate_fn(filtered_batch)
-                        if self.config.trainer.balance_batch:
-                            self._balance_batch(batch, metrics=metrics)
 
                         # compute global_valid tokens
                         batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
@@ -1073,7 +1087,9 @@ class RayPPOTrainer(object):
                             batch = batch.union(old_log_prob)
 
                         # Filter out finished requests
-                        if self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+                        if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
+                            # Remove padding requests
+                            batch = batch[:len(batch) - pad_size]
                             n_finished = {}
                             finished_batch = {}
                             filtered_batch = []
@@ -1091,6 +1107,7 @@ class RayPPOTrainer(object):
                                 if len(filtered_batch) >= self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n:
                                     break
                             filtered_batch = batch_collate_fn(filtered_batch)
+                            print(f'{len(filtered_batch)=}')
                         else:
                             filtered_batch = batch
                         batch = filtered_batch

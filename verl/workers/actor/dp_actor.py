@@ -104,6 +104,11 @@ class DataParallelPPOActor(BasePPOActor):
                     input_ids_rmpad_rolled, _, _ = ulysses_pad_and_slice_inputs(input_ids_rmpad_rolled, None,
                                                                                 self.ulysses_sequence_parallel_size)
 
+                # should be Long or int
+                assert input_ids_rmpad.dtype == torch.long or input_ids_rmpad.dtype == torch.int64, \
+                    f'input_ids_rmpad.dtype={input_ids_rmpad.dtype}, input_ids_rmpad.shape={input_ids_rmpad.shape}, \
+                    {micro_batch["input_ids"].dtype=}, {micro_batch["attention_mask"].sum()=},{response_length=}'
+
                 input_ids_rmpad_rolled = input_ids_rmpad_rolled.squeeze(0)  # ((total_nnz / sp) + pad)
 
                 # only pass input_ids and position_ids to enable flash_attn_varlen

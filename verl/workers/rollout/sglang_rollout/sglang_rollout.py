@@ -429,7 +429,6 @@ class SGLangRollout(BaseRollout):
                 cached_log_probs = cache[oid][rid]['output']['meta_info']['output_token_logprobs']
                 cached_log_probs.extend(new_log_probs)
                 trim_length = self.sampling_params.get('max_new_tokens', 1024)
-                print(f"trim_length: {trim_length}, len(cached_log_probs): {len(cached_log_probs)}")
                 if len(cached_log_probs) > trim_length:
                     cached_log_probs = cached_log_probs[:trim_length]
                 cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = cached_log_probs
@@ -455,6 +454,16 @@ class SGLangRollout(BaseRollout):
                     finished_rids.append(rid)
                     if n_finished[oid] == len(cache[oid]) and len(finished_oids) < batch_size:
                         finished_oids.append(oid)
+        # Clean up unfinished requests
+        if not self.partial_rollout:
+            for i, rid in enumerate(rids):
+                oid = rid.split('_nid')[0]
+                if oid in finished_oids:
+                    continue
+                finished[i] = False
+                finished_rids.remove(rid)
+                cache[oid][rid]['finished'] = False
+                cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = []
         self.group_cache = cache
         return ret, idx, attention_mask, position_ids, rids, finished, finished_oids, finished_rids
 
@@ -521,7 +530,7 @@ class SGLangRollout(BaseRollout):
                 
         out = _post_process_outputs(self.tokenizer, output)
 
-        response = out[0].to(idx.device)
+        response = out[0].to(idx.device).to(idx.dtype)
         log_probs = out[1].to(idx.device)
 
         if response.shape[1] < self.config.response_length:
