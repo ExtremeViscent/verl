@@ -1073,7 +1073,7 @@ class RayPPOTrainer(object):
                             batch = batch.union(old_log_prob)
 
                         # Filter out finished requests
-                        if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
+                        if self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
                             n_finished = {}
                             finished_batch = {}
                             filtered_batch = []

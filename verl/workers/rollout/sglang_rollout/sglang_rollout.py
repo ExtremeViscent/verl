@@ -428,7 +428,10 @@ class SGLangRollout(BaseRollout):
                     new_log_probs = []
                 cached_log_probs = cache[oid][rid]['output']['meta_info']['output_token_logprobs']
                 cached_log_probs.extend(new_log_probs)
-                cached_log_probs = cached_log_probs[:self.sampling_params.get('max_new_tokens', 1024)]
+                trim_length = self.sampling_params.get('max_new_tokens', 1024)
+                print(f"trim_length: {trim_length}, len(cached_log_probs): {len(cached_log_probs)}")
+                if len(cached_log_probs) > trim_length:
+                    cached_log_probs = cached_log_probs[:trim_length]
                 cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = cached_log_probs
         ret = []
         idx = []
