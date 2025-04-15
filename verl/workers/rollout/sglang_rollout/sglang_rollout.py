@@ -461,7 +461,8 @@ class SGLangRollout(BaseRollout):
                 if oid in finished_oids:
                     continue
                 finished[i] = False
-                finished_rids.remove(rid)
+                if rid in finished_rids:
+                    finished_rids.remove(rid)
                 cache[oid][rid]['finished'] = False
                 cache[oid][rid]['output']['meta_info']['output_token_logprobs'] = []
         self.group_cache = cache

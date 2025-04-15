@@ -1070,9 +1070,12 @@ class RayPPOTrainer(object):
                                 else:
                                     empty_count += 1
                             # Pad batch to be divisible by world_size
-                            pad_size = self.actor_rollout_wg.world_size - len(filtered_batch) % self.actor_rollout_wg.world_size
-                            for i in range(pad_size):
-                                filtered_batch.append(filtered_batch[0])
+                            if len(filtered_batch) % self.actor_rollout_wg.world_size != 0:
+                                pad_size = self.actor_rollout_wg.world_size - len(filtered_batch) % self.actor_rollout_wg.world_size
+                                for i in range(pad_size):
+                                    filtered_batch.append(filtered_batch[0])
+                            else:
+                                pad_size = 0
                             print(f'{empty_count=}, {non_empty_count=}, {pad_size=}')
                             print(f'{filtered_size=}')
                             batch = batch_collate_fn(filtered_batch)
