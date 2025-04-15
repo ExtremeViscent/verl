@@ -422,8 +422,10 @@ class SGLangRollout(BaseRollout):
                     cache[oid][rid]['finished'] = finished
                 if cache[oid][rid]['finished']:
                     new_log_probs = output['meta_info']['output_token_logprobs']
-                else:
+                elif self.partial_rollout:
                     new_log_probs = self.convert_output_id_to_logprob(output.get('output_ids', []))
+                else:
+                    new_log_probs = []
                 cached_log_probs = cache[oid][rid]['output']['meta_info']['output_token_logprobs']
                 cached_log_probs.extend(new_log_probs)
                 cached_log_probs = cached_log_probs[:self.sampling_params.get('max_new_tokens', 1024)]
