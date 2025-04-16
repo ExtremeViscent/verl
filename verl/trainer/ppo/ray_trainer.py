@@ -1086,7 +1086,8 @@ class RayPPOTrainer(object):
                         # recompute old_log_probs
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                            cached_old_log_probs, old_log_prob = self.cache_old_log_probs(cached_old_log_probs, old_log_prob, batch)
+                            if self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+                                cached_old_log_probs, old_log_prob = self.cache_old_log_probs(cached_old_log_probs, old_log_prob, batch)
                             batch = batch.union(old_log_prob)
 
                         # Filter out finished requests

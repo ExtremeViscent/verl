@@ -100,6 +100,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                          processing_class=processing_class,
                          checkpoint_contents=checkpoint_contents)
         self.futures = []
+        self.pg = None
 
     def load_checkpoint(self, local_path: str, hdfs_path: str = None, del_local_after_load=False):
         if local_path is None:
@@ -162,7 +163,6 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             self.previous_saved_paths = self.previous_saved_paths[keep_start:]
 
         local_path = self.local_mkdir(local_path)
-        torch.distributed.barrier()
 
         # every rank will save its own model and optim shard
         state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True)
@@ -195,9 +195,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 for future in self.futures:
                     future.result()
                 self.futures = []
-                model_future = dcp.state_dict_saver.async_save(model_state_dict, checkpoint_id=model_path)
-                optim_future = dcp.state_dict_saver.async_save(optimizer_state_dict, checkpoint_id=optim_path)
-                extra_future = dcp.state_dict_saver.async_save(extra_state_dict, checkpoint_id=extra_path)
+                model_future = dcp.state_dict_saver.async_save(model_state_dict, checkpoint_id=model_path, process_group=self.pg)
+                optim_future = dcp.state_dict_saver.async_save(optimizer_state_dict, checkpoint_id=optim_path, process_group=self.pg)
+                extra_future = dcp.state_dict_saver.async_save(extra_state_dict, checkpoint_id=extra_path, process_group=self.pg)
                 self.futures.append(model_future)
                 self.futures.append(optim_future)
                 self.futures.append(extra_future)
@@ -215,6 +215,6 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 self.model._fsdp_wrapped_module.config.save_pretrained(hf_local_path)
                 self.processing_class.save_pretrained(hf_local_path)
 
-        torch.distributed.barrier()
+        # torch.distributed.barrier()
 
         self.previous_saved_paths.append(local_path)

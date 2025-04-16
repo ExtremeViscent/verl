@@ -657,7 +657,7 @@ class ActorRolloutRefWorker(Worker):
                                                 global_step=global_step,
                                                 max_ckpt_to_keep=max_ckpt_to_keep)
 
-        torch.distributed.barrier()
+        # torch.distributed.barrier(group=self.device_mesh.get_group('fsdp'))
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
 
@@ -864,6 +864,7 @@ class CriticWorker(Worker):
             lr_scheduler=self.critic_lr_scheduler,
             processing_class=self.processor if self.processor is not None else self.tokenizer,
             checkpoint_contents=self.config.checkpoint.contents)
+        self.checkpoint_manager.pg = self.device_mesh.get_group('fsdp')
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_values(self, data: DataProto):
