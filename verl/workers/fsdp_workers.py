@@ -578,6 +578,16 @@ class ActorRolloutRefWorker(Worker):
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def sync_params(self):
+        assert self._is_rollout
+        if self._is_offload_param:
+            load_fsdp_model_to_gpu(self.actor_module_fsdp)
+        self.rollout_sharding_manager.sync_params()
+        if self._is_offload_param:
+            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+        return DataProto()
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def sync_rollout(self, output: DataProto):
         assert self._is_rollout
         output = self.rollout_sharding_manager.postprocess_data(output)
