@@ -890,7 +890,7 @@ class RayPPOTrainer(object):
         metrics.update(global_balance_stats)
 
     def cache_old_log_probs(self, cached_old_log_probs, new_old_log_prob: DataProto, batch: DataProto):
-        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False) or True:
             return cached_old_log_probs, new_old_log_prob
         new_old_log_prob_list = []
         for i in range(new_old_log_prob.batch['old_log_probs'].size(0)):
