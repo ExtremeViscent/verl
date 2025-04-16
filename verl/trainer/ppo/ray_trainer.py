@@ -1077,7 +1077,6 @@ class RayPPOTrainer(object):
                             else:
                                 pad_size = 0
                             print(f'{empty_count=}, {non_empty_count=}, {pad_size=}')
-                            print(f'{filtered_size=}')
                             batch = batch_collate_fn(filtered_batch)
 
                         # compute global_valid tokens
