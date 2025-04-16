@@ -19,6 +19,8 @@ import warnings
 from typing import Union
 import torch
 import torch.distributed
+import torch.distributed as dist
+import torch.distributed.checkpoint as dcp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType
 from torch.distributed.fsdp import ShardedStateDictConfig, ShardedOptimStateDictConfig
 
@@ -28,6 +30,40 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 
 from .checkpoint_manager import BaseCheckpointManager
 
+from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+from torch.distributed.checkpoint.stateful import Stateful
+from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
+
+
+class AppState(Stateful):
+    """This is a useful wrapper for checkpointing the Application State. Since this object is compliant
+    with the Stateful protocol, DCP will automatically call state_dict/load_stat_dict as needed in the
+    dcp.save/load APIs.
+
+    Note: We take advantage of this wrapper to hande calling distributed state dict methods on the model
+    and optimizer.
+    """
+
+    def __init__(self, model, optimizer=None):
+        self.model = model
+        self.optimizer = optimizer
+
+    def state_dict(self):
+        # this line automatically manages FSDP FQN's, as well as sets the default state dict type to FSDP.SHARDED_STATE_DICT
+        model_state_dict, optimizer_state_dict = get_state_dict(self.model, self.optimizer)
+        return {
+            "model": model_state_dict,
+            "optim": optimizer_state_dict
+        }
+
+    def load_state_dict(self, state_dict):
+        # sets our state dicts on the model and optimizer, now that we've loaded
+        set_state_dict(
+            self.model,
+            self.optimizer,
+            model_state_dict=state_dict["model"],
+            optim_state_dict=state_dict["optim"]
+        )
 
 class FSDPCheckpointManager(BaseCheckpointManager):
     """
@@ -63,6 +99,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                          lr_scheduler=lr_scheduler,
                          processing_class=processing_class,
                          checkpoint_contents=checkpoint_contents)
+        self.futures = []
 
     def load_checkpoint(self, local_path: str, hdfs_path: str = None, del_local_after_load=False):
         if local_path is None:
@@ -154,9 +191,19 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 print(f'[rank-{self.rank}]: Saving model to {os.path.abspath(model_path)}')
                 print(f'[rank-{self.rank}]: Saving checkpoint to {os.path.abspath(model_path)}')
                 print(f'[rank-{self.rank}]: Saving extra_state to {os.path.abspath(extra_path)}')
-                torch.save(model_state_dict, model_path)
-                torch.save(optimizer_state_dict, optim_path)  # TODO: address optimizer is None
-                torch.save(extra_state_dict, extra_path)
+                # Wait for previous futures to complete
+                for future in self.futures:
+                    future.result()
+                self.futures = []
+                model_future = dcp.state_dict_saver.async_save(model_state_dict, model_path)
+                optim_future = dcp.state_dict_saver.async_save(optimizer_state_dict, optim_path)
+                extra_future = dcp.state_dict_saver.async_save(extra_state_dict, extra_path)
+                self.futures.append(model_future)
+                self.futures.append(optim_future)
+                self.futures.append(extra_future)
+                # torch.save(model_state_dict, model_path)
+                # torch.save(optimizer_state_dict, optim_path)  # TODO: address optimizer is None
+                # torch.save(extra_state_dict, extra_path)
 
         if "hf_model" in self.checkpoint_contents:
             # wait for everyone to dump to local
