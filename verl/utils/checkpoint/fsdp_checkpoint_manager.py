@@ -195,9 +195,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 for future in self.futures:
                     future.result()
                 self.futures = []
-                model_future = dcp.state_dict_saver.async_save(model_state_dict, model_path)
-                optim_future = dcp.state_dict_saver.async_save(optimizer_state_dict, optim_path)
-                extra_future = dcp.state_dict_saver.async_save(extra_state_dict, extra_path)
+                model_future = dcp.state_dict_saver.async_save(model_state_dict, checkpoint_id=model_path)
+                optim_future = dcp.state_dict_saver.async_save(optimizer_state_dict, checkpoint_id=optim_path)
+                extra_future = dcp.state_dict_saver.async_save(extra_state_dict, checkpoint_id=extra_path)
                 self.futures.append(model_future)
                 self.futures.append(optim_future)
                 self.futures.append(extra_future)
