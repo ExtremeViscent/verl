@@ -894,8 +894,8 @@ class RayPPOTrainer(object):
             return cached_old_log_probs, batch
         replaced_tokens = 0
         for i in range(batch.batch['old_log_probs'].size(0)):
-            new_response_mask = batch.batch['response_mask'][i]
-            new_old_log_prob = batch.batch['old_log_probs'][i]
+            new_response_mask = batch.batch['response_mask'][i].detach().clone()
+            new_old_log_prob = batch.batch['old_log_probs'][i].detach().clone()
             rid = batch.batch['rids'][i]
             rid = decode_tensor_to_string(rid)
             cached_response_mask = cached_old_log_probs[rid]['response_mask']
@@ -909,6 +909,7 @@ class RayPPOTrainer(object):
                 replaced_tokens += replace_mask.sum().item()
                 replace_mask = replace_mask.to(torch.bool)
                 new_old_log_prob = torch.where(replace_mask, new_old_log_prob, cached_old_log_prob)
+                # new_old_log_prob = new_old_log_prob - torch.logsumexp(new_old_log_prob, dim=-1, keepdim=True)
                 cached_old_log_probs[rid]['old_log_probs'] = new_old_log_prob
                 cached_old_log_probs[rid]['response_mask'] = new_response_mask
             batch.batch['old_log_probs'][i] = new_old_log_prob
