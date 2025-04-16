@@ -889,34 +889,31 @@ class RayPPOTrainer(object):
                                                     prefix=logging_prefix)
         metrics.update(global_balance_stats)
 
-    def cache_old_log_probs(self, cached_old_log_probs, new_old_log_prob: DataProto, batch: DataProto):
+    def cache_old_log_probs(self, cached_old_log_probs, batch: DataProto):
         if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
-            return cached_old_log_probs, new_old_log_prob
-        new_old_log_prob_list = []
-        for i in range(new_old_log_prob.batch['old_log_probs'].size(0)):
-            unpadded_new_old_log_probs, indices, *_ = unpad_input(new_old_log_prob.batch['old_log_probs'][i].unsqueeze(-1).unsqueeze(0), batch.batch['response_mask'][i].unsqueeze(0))
-            unpadded_new_old_log_probs = unpadded_new_old_log_probs.squeeze(-1)
+            return cached_old_log_probs, batch
+        replaced_tokens = 0
+        for i in range(batch.batch['old_log_probs'].size(0)):
+            new_response_mask = batch.batch['response_mask'][i]
+            new_old_log_prob = batch.batch['old_log_probs'][i]
             rid = batch.batch['rids'][i]
             rid = decode_tensor_to_string(rid)
-            unpadded_cached_old_log_probs = cached_old_log_probs[rid]
-            cached_length = unpadded_cached_old_log_probs.size(0)
-            delta = unpadded_new_old_log_probs.size(0) - cached_length
-            if delta > 0:
-                unpadded_old_log_probs = torch.cat([unpadded_cached_old_log_probs, unpadded_new_old_log_probs[cached_length:]])
+            cached_response_mask = cached_old_log_probs[rid]['response_mask']
+            cached_old_log_prob = cached_old_log_probs[rid]['old_log_probs']
+            if cached_response_mask is None:
+                cached_old_log_probs[rid]['old_log_probs'] = new_old_log_prob
+                cached_old_log_probs[rid]['response_mask'] = new_response_mask
             else:
-                unpadded_old_log_probs = unpadded_cached_old_log_probs
-                
-            cached_old_log_probs[rid] = unpadded_old_log_probs
-            # restore padding
-            padded_old_log_probs = pad_input(
-                hidden_states=unpadded_old_log_probs.unsqueeze(-1),
-                indices=indices,
-                batch=1,
-                seqlen=batch.batch['response_mask'].shape[1]
-            ).squeeze(-1).squeeze(0)
-            new_old_log_prob_list.append(padded_old_log_probs)
-        new_old_log_prob.batch['old_log_probs'] = torch.stack(new_old_log_prob_list, dim=0)
-        return cached_old_log_probs, new_old_log_prob
+                # xor the response mask
+                replace_mask = cached_response_mask ^ new_response_mask
+                replaced_tokens += replace_mask.sum().item()
+                replace_mask = replace_mask.to(torch.bool)
+                new_old_log_prob = torch.where(replace_mask, new_old_log_prob, cached_old_log_prob)
+                cached_old_log_probs[rid]['old_log_probs'] = new_old_log_prob
+                cached_old_log_probs[rid]['response_mask'] = new_response_mask
+            batch.batch['old_log_probs'][i] = new_old_log_prob
+        print(f'replaced_tokens: {replaced_tokens}')
+        return cached_old_log_probs, batch
 
 
 
@@ -991,7 +988,10 @@ class RayPPOTrainer(object):
                             rid = f"{oid}_nid{uuid4().hex[:8]}"
                             rids[-1].append(rid)
                             rid_to_batch[rid] = i
-                            cached_old_log_probs[rid] = torch.zeros(0)
+                            cached_old_log_probs[rid] = {
+                                'old_log_probs': torch.zeros(0),
+                                'response_mask': None
+                            }
                             rids_tensor[-1].append(encode_string_to_tensor(rid))
                         rids_tensor[-1] = torch.stack(rids_tensor[-1], dim=0)
                     macro_gen_batch.batch['rids'] = torch.stack(rids_tensor, dim=0)
@@ -1086,8 +1086,8 @@ class RayPPOTrainer(object):
                         # recompute old_log_probs
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                            cached_old_log_probs, old_log_prob = self.cache_old_log_probs(cached_old_log_probs, old_log_prob, batch)
                             batch = batch.union(old_log_prob)
+                            cached_old_log_probs, batch = self.cache_old_log_probs(cached_old_log_probs, batch)
 
                         # Filter out finished requests
                         if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
