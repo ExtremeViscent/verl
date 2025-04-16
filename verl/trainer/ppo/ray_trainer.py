@@ -890,7 +890,7 @@ class RayPPOTrainer(object):
         metrics.update(global_balance_stats)
 
     def cache_old_log_probs(self, cached_old_log_probs, new_old_log_prob: DataProto, batch: DataProto):
-        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False) or True:
+        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
             return cached_old_log_probs, new_old_log_prob
         new_old_log_prob_list = []
         for i in range(new_old_log_prob.batch['old_log_probs'].size(0)):
@@ -899,8 +899,8 @@ class RayPPOTrainer(object):
             rid = batch.batch['rids'][i]
             rid = decode_tensor_to_string(rid)
             unpadded_cached_old_log_probs = cached_old_log_probs[rid]
-            cached_length = len(unpadded_cached_old_log_probs)
-            delta = len(unpadded_new_old_log_probs) - cached_length
+            cached_length = unpadded_cached_old_log_probs.size(0)
+            delta = unpadded_new_old_log_probs.size(0) - cached_length
             if delta > 0:
                 unpadded_old_log_probs = torch.cat([unpadded_cached_old_log_probs, unpadded_new_old_log_probs[cached_length:]])
             else:
