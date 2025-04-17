@@ -31,14 +31,14 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=512
+train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=1
-train_prompt_mini_bsz=64
+n_resp_per_prompt=16
+train_prompt_mini_bsz=2048
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-PPO'
+project_name='ORZ-PPO'
 exp_name=Qwen2.5-7B
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
@@ -55,7 +55,7 @@ NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"qwen/Qwen2.5-7B"}
-CKPTS_DIR=${CKPTS_DIR:-"/tmp/ckpts_bugfix/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts_bugfix/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
@@ -110,7 +110,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.model.override_config.embd_pdrop=0. \
     +actor_rollout_ref.model.override_config.resid_pdrop=0. \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr=5e-7 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=10 \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=${train_prompt_mini_bsz} \
@@ -154,7 +154,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=False \
     trainer.test_freq=10 \
