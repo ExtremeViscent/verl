@@ -11,7 +11,7 @@ fi
 group_shuffle=$1
 partial_rollout=$2
 
-adv_estimator=gae
+adv_estimator=grpo
 
 kl_coef=0.0
 use_kl_loss=False
@@ -31,14 +31,14 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=512
+train_prompt_bsz=32
 n_groups=4
-n_resp_per_prompt=1
+n_resp_per_prompt=16
 train_prompt_mini_bsz=512
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-PPO'
+project_name='DAPO-GRPO'
 exp_name=Qwen2.5-32B
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
@@ -138,19 +138,6 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     actor_rollout_ref.ref.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=${sp_size} \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
-    critic.model.path="${MODEL_PATH}" \
-    critic.model.enable_gradient_checkpointing=True \
-    critic.use_dynamic_bsz=${use_dynamic_bsz} \
-    critic.forward_max_token_len_per_gpu=${infer_ppo_max_token_len} \
-    critic.ppo_max_token_len_per_gpu=${actor_ppo_max_token_len} \
-    critic.forward_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
-    critic.ppo_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
-    critic.ppo_mini_batch_size=${train_prompt_mini_bsz} \
-    critic.model.fsdp_config.param_offload=${offload} \
-    critic.model.fsdp_config.optimizer_offload=${offload} \
-    critic.model.use_remove_padding=True \
-    critic.ulysses_sequence_parallel_size=${sp_size} \
-    critic.optim.lr=1e-6 \
     +custom_reward_function.overlong_buffer.enable=${enable_overlong_buffer} \
     +custom_reward_function.overlong_buffer.len=${overlong_buffer_len} \
     +custom_reward_function.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
