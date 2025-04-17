@@ -454,7 +454,8 @@ class SGLangRollout(BaseRollout):
                     finished_rids.append(rid)
                     if n_finished[oid] == len(cache[oid]) and len(finished_oids) < batch_size:
                         finished_oids.append(oid)
-                        self.group_cache.pop(oid)
+        for oid in finished_oids:
+            cache.pop(oid)
         # Clean up unfinished requests
         if not self.partial_rollout:
             for i, rid in enumerate(rids):
