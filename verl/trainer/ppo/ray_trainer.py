@@ -939,6 +939,7 @@ class RayPPOTrainer(object):
 
         # load checkpoint before doing anything
         self._load_checkpoint()
+        self.actor_rollout_wg.sync_params()
 
         # perform validation before training
         # currently, we only support validation using the reward_function.

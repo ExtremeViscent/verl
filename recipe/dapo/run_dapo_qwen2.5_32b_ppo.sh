@@ -164,4 +164,4 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=disable
+    trainer.resume_mode=auto
