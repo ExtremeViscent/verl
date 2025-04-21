@@ -12,20 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ray
+# Standard library imports
 import os
-
+import tempfile
+import subprocess
 import warnings
-from typing import Union
+from typing import List, Union
+
+# Third-party imports
+import ray
 import torch
-import torch.distributed
+import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType
 from torch.distributed.fsdp import ShardedStateDictConfig, ShardedOptimStateDictConfig
 
-from verl.utils.fs import copy_to_local, is_non_local
-
+# Transformers imports
 from transformers import PreTrainedTokenizer, ProcessorMixin
 
+# Project imports
+from verl.utils.fs import copy_to_local, is_non_local
 from .checkpoint_manager import BaseCheckpointManager
 
 
@@ -63,6 +68,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                          lr_scheduler=lr_scheduler,
                          processing_class=processing_class,
                          checkpoint_contents=checkpoint_contents)
+        self.pg = torch.distributed.new_group(ranks=[torch.distributed.get_rank()])
+        self.futures = []
 
     def load_checkpoint(self, local_path: str, hdfs_path: str = None, del_local_after_load=False):
         if local_path is None:
@@ -114,6 +121,13 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         if local_path is None:
             return
 
+        # Wait for any previous rsync operations to complete
+        while self.futures:
+            process = self.futures.pop(0)
+            if process.poll() is None:  # If process is still running
+                print(f'[rank-{self.rank}]: Waiting for previous checkpoint rsync to complete')
+                process.wait()  # Wait for it to finish
+
         # record the previous global step
         self.previous_global_step = global_step
 
@@ -124,10 +138,15 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             self.remove_previous_save_local_path(self.previous_saved_paths[:keep_start])
             self.previous_saved_paths = self.previous_saved_paths[keep_start:]
 
-        local_path = self.local_mkdir(local_path)
-        torch.distributed.barrier()
+        # Create a temporary directory for saving checkpoints
+        temp_dir = tempfile.mkdtemp(prefix=f"checkpoint_temp_{self.rank}_")
+        print(f'[rank-{self.rank}]: Created temporary directory {temp_dir}')
 
-        # every rank will save its own model and optim shard
+        # Prepare the final target directory
+        local_path = self.local_mkdir(local_path)
+        dist.barrier()
+
+        # every rank will save its own model and optim shard to the temporary directory
         state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True)
         optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
         with warnings.catch_warnings():
@@ -147,27 +166,66 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                     'lr_scheduler': lr_scheduler_state_dict,
                     'rng': self.get_rng_state(),
                 }
-                model_path = os.path.join(local_path, f'model_world_size_{self.world_size}_rank_{self.rank}.pt')
-                optim_path = os.path.join(local_path, f'optim_world_size_{self.world_size}_rank_{self.rank}.pt')
-                extra_path = os.path.join(local_path, f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt')
+                model_path = os.path.join(temp_dir, f'model_world_size_{self.world_size}_rank_{self.rank}.pt')
+                optim_path = os.path.join(temp_dir, f'optim_world_size_{self.world_size}_rank_{self.rank}.pt')
+                extra_path = os.path.join(temp_dir, f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt')
 
                 print(f'[rank-{self.rank}]: Saving model to {os.path.abspath(model_path)}')
                 print(f'[rank-{self.rank}]: Saving checkpoint to {os.path.abspath(model_path)}')
                 print(f'[rank-{self.rank}]: Saving extra_state to {os.path.abspath(extra_path)}')
                 torch.save(model_state_dict, model_path)
-                torch.save(optimizer_state_dict, optim_path)  # TODO: address optimizer is None
+                torch.save(optimizer_state_dict, optim_path)
                 torch.save(extra_state_dict, extra_path)
 
         if "hf_model" in self.checkpoint_contents:
             # wait for everyone to dump to local
-            torch.distributed.barrier()
+            dist.barrier()
 
             if self.rank == 0:
-                hf_local_path = os.path.join(local_path, 'huggingface')
-                os.makedirs(hf_local_path, exist_ok=True)
-                self.model._fsdp_wrapped_module.config.save_pretrained(hf_local_path)
-                self.processing_class.save_pretrained(hf_local_path)
+                hf_temp_path = os.path.join(temp_dir, 'huggingface')
+                os.makedirs(hf_temp_path, exist_ok=True)
+                self.model._fsdp_wrapped_module.config.save_pretrained(hf_temp_path)
+                self.processing_class.save_pretrained(hf_temp_path)
 
-        torch.distributed.barrier()
+        dist.barrier()
+        
+        # Make sure the target directory exists
+        os.makedirs(local_path, exist_ok=True)
+        
+        # Only copy files relevant to this rank
+        print(f'[rank-{self.rank}]: Starting rsync for rank-specific files to {local_path}')
+        
+        # Copy model file for this rank
+        model_file = f'model_world_size_{self.world_size}_rank_{self.rank}.pt'
+        model_src = os.path.join(temp_dir, model_file)
+        model_dst = os.path.join(local_path, model_file)
+        rsync_model_cmd = ["rsync", "-a", model_src, model_dst]
+        process = subprocess.Popen(rsync_model_cmd)
+        self.futures.append(process)
+        
+        # Copy optimizer file for this rank
+        optim_file = f'optim_world_size_{self.world_size}_rank_{self.rank}.pt'
+        optim_src = os.path.join(temp_dir, optim_file)
+        optim_dst = os.path.join(local_path, optim_file)
+        rsync_optim_cmd = ["rsync", "-a", optim_src, optim_dst]
+        process = subprocess.Popen(rsync_optim_cmd)
+        self.futures.append(process)
+        
+        # Copy extra state file for this rank
+        extra_file = f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt'
+        extra_src = os.path.join(temp_dir, extra_file)
+        extra_dst = os.path.join(local_path, extra_file)
+        rsync_extra_cmd = ["rsync", "-a", extra_src, extra_dst]
+        process = subprocess.Popen(rsync_extra_cmd)
+        self.futures.append(process)
+        
+        # Only rank 0 copies the huggingface directory if needed
+        if self.rank == 0 and "hf_model" in self.checkpoint_contents:
+            hf_src = os.path.join(temp_dir, "huggingface")
+            hf_dst = os.path.join(local_path, "huggingface")
+            if os.path.exists(hf_src):
+                rsync_hf_cmd = ["rsync", "-a", f"{hf_src}/", f"{hf_dst}/"]
+                process = subprocess.Popen(rsync_hf_cmd)
+                self.futures.append(process)
 
         self.previous_saved_paths.append(local_path)
