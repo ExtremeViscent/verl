@@ -781,6 +781,9 @@ class RayPPOTrainer(object):
         print(f'local_global_step_folder: {local_global_step_folder}')
         actor_local_path = os.path.join(local_global_step_folder, 'actor')
 
+        # create path if not exists
+        os.makedirs(os.path.dirname(actor_local_path), exist_ok=True)
+
         actor_remote_path = None if self.config.trainer.default_hdfs_dir is None else os.path.join(
             self.config.trainer.default_hdfs_dir, f'global_step_{self.global_steps}', 'actor')
 
@@ -890,7 +893,7 @@ class RayPPOTrainer(object):
         metrics.update(global_balance_stats)
 
     def cache_old_log_probs(self, cached_old_log_probs, batch: DataProto):
-        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False) or True:
             return cached_old_log_probs, batch
         replaced_tokens = 0
         for i in range(batch.batch['old_log_probs'].size(0)):

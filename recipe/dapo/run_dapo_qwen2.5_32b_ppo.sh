@@ -43,12 +43,12 @@ exp_name=Qwen2.5-32B
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
     if [ "${partial_rollout}" = "True" ]; then
-        exp_name="${exp_name}-PR"
+        exp_name="${exp_name}-PR-nc"
     fi
 fi
 
 # Ray
-RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
+RAY_ADDRESS=${RAY_ADDRESS:-"http://node-0:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
