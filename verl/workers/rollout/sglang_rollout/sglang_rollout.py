@@ -168,9 +168,11 @@ class SGLangRollout(BaseRollout):
             # log_requests_level=2,
             max_running_requests=128,
             cuda_graph_max_bs=128,
+            disable_cuda_graph="AMD" in torch.cuda.get_device_name(),
             enable_mixed_chunk=True,
             stream_interval=256,
             enable_torch_compile=False,
+            redis_host=config.get("redis_host", "node-0"),
         )
 
         # offload

@@ -16,6 +16,7 @@ FSDP PPO Trainer with Ray-based single controller.
 This trainer supports model-agonistic model initialization with huggingface
 """
 
+import subprocess
 from math import ceil
 import os
 import uuid
@@ -27,6 +28,7 @@ from typing import Type, Dict
 from copy import deepcopy
 from collections import defaultdict
 from functools import partial
+import redis
 from tqdm import tqdm
 
 import ray
@@ -705,6 +707,16 @@ class RayPPOTrainer(object):
         val_metric_dict = {f"val/{key}": value for key, value in metric_dict.items()}
         return val_metric_dict
 
+    def init_redis(self):
+        # Check if redis-server is already running
+        try:
+            self._redis_client = redis.Redis(host=self.config.actor_rollout_ref.rollout.redis_host, port=6389, db=0)
+            self._redis_client.ping()
+        except:
+            self._redis_server = subprocess.Popen(["redis-server", "--port", "6389", "--bind", "0.0.0.0",
+                                               "--protected-mode", "no", "--daemonize", "yes"])
+        
+
     def init_workers(self):
         """Init resource pool and worker group"""
         self.resource_pool_manager.create_resource_pool()
@@ -771,6 +783,7 @@ class RayPPOTrainer(object):
         # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
         self.actor_rollout_wg = all_wg['actor_rollout']
         # self.actor_rollout_wg.clean_sglang_process()
+        self.init_redis()
         self.actor_rollout_wg.init_model()
 
     def _save_checkpoint(self):

@@ -2,6 +2,8 @@ import asyncio
 import time
 from typing import AsyncIterator, Dict, List, Optional, Tuple, Union
 import uuid
+
+import redis
 from sglang.srt.managers.io_struct import GenerateReqInput, AbortReq
 from sglang.srt.entrypoints.verl_engine import VerlEngine as VerlEngineBase
 from sglang.srt.entrypoints.verl_engine import _preprocess_tensor_for_update_weights
@@ -194,6 +196,7 @@ class VerlEngine(VerlEngineBase):
         tp_size_per_node = self._tp_size // nnodes
         node_rank = self._tp_rank // tp_size_per_node
         first_rank_in_node = self._tp_rank % tp_size_per_node == 0
+        redis_host = kwargs.pop('redis_host', 'node-0')
 
         if first_rank_in_node:
             os.environ["SGLANG_BLOCK_NONZERO_RANK_CHILDREN"] = "0"
@@ -204,6 +207,46 @@ class VerlEngine(VerlEngineBase):
             self._engine = None
 
         dist.barrier(group=self._device_mesh_cpu.get_group())
+
+        # Initialize Redis
+        self._redis_client = redis.Redis(host=redis_host, port=6389, db=0)
+        self._redis_key = str(uuid.uuid4())[:8]
+        # Broadcast Redis key to all nodes
+        [self._redis_key] = broadcast_pyobj(
+            data=[self._redis_key],
+            rank=self._tp_rank,
+            dist_group=self._device_mesh_cpu.get_group(),
+            src=self._device_mesh_cpu.mesh[0].item(),
+        )
+        if self._tp_rank == 0:
+            self._redis_client.set(self._redis_key, '0')
+        dist.barrier(group=self._device_mesh_cpu.get_group())
+        self.redis_barrier()
+
+    def redis_barrier(self):
+        # atomically count arrivals
+        self._redis_client.incr(self._redis_key)
+
+        # wait for everyone
+        while int(self._redis_client.get(self._redis_key)) < self._tp_size:
+            time.sleep(0.1)
+
+        # rank‑0 prepares next round
+        if self._tp_rank == 0:
+            old_key = self._redis_key
+            self._redis_key = str(uuid.uuid4())[:8]
+            pipe = self._redis_client.pipeline()
+            pipe.set(self._redis_key, 0)        # init next barrier
+            pipe.expire(old_key, 3600)          # tidy up old key (optional)
+            pipe.execute()
+
+        # broadcast is blocking; acts as the post‑barrier sync
+        [self._redis_key] = broadcast_pyobj(
+            data=[self._redis_key],
+            rank=self._tp_rank,
+            dist_group=self._device_mesh_cpu.get_group(),
+            src=self._device_mesh_cpu.mesh[0].item(),
+        )
 
     def update_weights_from_tensor(
         self,
@@ -299,6 +342,8 @@ class VerlEngine(VerlEngineBase):
                 )
         else:
             output = None
+
+        self.redis_barrier()
 
         # # Most naive implementation, can extract tensor and send via gloo if too slow
         [output] = broadcast_pyobj(
