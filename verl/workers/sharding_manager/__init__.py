@@ -23,9 +23,7 @@ from .fsdp_ulysses import FSDPUlyssesShardingManager
 
 AllGatherPPModel = None
 
-if is_megatron_core_available() and is_vllm_available():
-    from .megatron_vllm import AllGatherPPModel, MegatronVLLMShardingManager
-elif AllGatherPPModel is not None:
+if AllGatherPPModel is not None:
     pass
 else:
     AllGatherPPModel = None
