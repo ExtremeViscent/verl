@@ -133,8 +133,8 @@ def validate_response_structure(processed_str: str) -> bool:
         positions['answer_start'] > positions['answer_end']):
         # print("  [Error] Incorrect tag order: Expected <think>...</think><answer>...</answer>")
         validation_passed = False
-    else:
-        print("  Tag sequence validation passed")
+    # else:
+    #     print("  Tag sequence validation passed")
 
     return validation_passed
 
