@@ -16,8 +16,7 @@ def extract_solution(solution_str: str) -> Tuple[Optional[str], str]:
     elif "<|im_start|>assistant" in solution_str:
         processed_str = solution_str.split("<|im_start|>assistant", 1)[1]
     else:
-        # print("[Error] Failed to locate model response header")
-        return None, solution_str
+        processed_str = solution_str
 
     # Extract final answer using XML-style tags
     answer_pattern = r'<answer>(.*?)</answer>'
