@@ -1124,6 +1124,15 @@ class RayPPOTrainer(object):
                         else:
                             filtered_batch = batch
                         batch = filtered_batch
+                        # log finished requests
+                        for i, batch_ in enumerate(batch):
+                            seq = batch_.batch['seq']
+                            attention_mask = batch_.batch['attention_mask']
+                            seq = seq[attention_mask.bool()]
+                            response_mask = batch_.batch['response_mask'][attention_mask.bool()]
+                            # log seq and response_mask
+                            artifacts[f'seq_{i}'] = seq.detach().cpu()
+                            artifacts[f'response_mask_{i}'] = response_mask.detach().cpu()
 
                         # log lengths
                         artifacts['lengths'] = batch.batch['response_mask'].sum(dim=-1).detach().cpu()
