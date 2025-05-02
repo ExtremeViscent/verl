@@ -8,6 +8,13 @@ if [ $# -ne 2 ]; then
     exit 1
 fi
 
+# No-op if hostname is not node-0
+if [ "$(hostname)" != "node-0" ]; then
+    echo "This script should only be run on node-0."
+    exit 0
+fi
+
+
 group_shuffle=$1
 partial_rollout=$2
 
