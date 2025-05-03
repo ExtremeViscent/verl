@@ -28,6 +28,7 @@ from copy import deepcopy
 from collections import defaultdict
 from functools import partial
 from tqdm import tqdm
+from tensordict import TensorDict
 
 import ray
 import numpy as np
@@ -323,6 +324,10 @@ class RayPPOTrainer(object):
 
         self._validate_config()
         self._create_dataloader()
+
+        # create artifact dir
+        self.artifact_dir = os.path.join(self.config.trainer.default_local_dir, 'artifacts')
+        os.makedirs(self.artifact_dir, exist_ok=True)
 
     def _validate_config(self):
         config = self.config
@@ -964,6 +969,7 @@ class RayPPOTrainer(object):
             for macro_batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
+                artifacts = TensorDict()
 
                 macro_batch: DataProto = DataProto.from_single_dict(macro_batch_dict)
 
@@ -1119,6 +1125,9 @@ class RayPPOTrainer(object):
                             filtered_batch = batch
                         batch = filtered_batch
 
+                        # log lengths
+                        artifacts['lengths'] = batch.batch['response_mask'].sum(dim=-1).detach().cpu()
+
                         if self.use_reference_policy:
                             # compute reference log_prob
                             with _timer('ref', timing_raw):
@@ -1130,6 +1139,8 @@ class RayPPOTrainer(object):
                             with _timer('values', timing_raw):
                                 values = self.critic_wg.compute_values(batch)
                                 batch = batch.union(values)
+                                # log values
+                                artifacts['values'] = batch.batch['values'].detach().cpu()
 
                         with _timer('adv', timing_raw):
                             # compute scores. Support both model and function-based.
@@ -1150,6 +1161,7 @@ class RayPPOTrainer(object):
                                 print(f'Error in reward_fn: {e}')
                                 reward_tensor = self.reward_fn(batch)
                                 reward_extra_infos_dict = {}
+                            artifacts['reward'] = reward_tensor.detach().cpu()
 
                             batch.batch['token_level_scores'] = reward_tensor
 
@@ -1210,6 +1222,8 @@ class RayPPOTrainer(object):
 
                     # TODO: make a canonical logger that supports various backend
                     logger.log(data=metrics, step=self.global_steps)
+                    # save artifacts
+                    artifacts.save(os.path.join(self.artifact_dir, str(self.global_steps))),
                     with open(log_file, 'a') as f:
                         f.write(f'{metrics}\n')
 
