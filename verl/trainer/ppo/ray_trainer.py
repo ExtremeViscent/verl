@@ -898,8 +898,6 @@ class RayPPOTrainer(object):
         metrics.update(global_balance_stats)
 
     def cache_old_log_probs(self, cached_old_log_probs, batch: DataProto):
-        if not self.config.actor_rollout_ref.rollout.get('partial_rollout', False) or True:
-            return cached_old_log_probs, batch
         replaced_tokens = 0
         for i in range(batch.batch['old_log_probs'].size(0)):
             new_response_mask = batch.batch['response_mask'][i].detach().clone()
@@ -1126,13 +1124,17 @@ class RayPPOTrainer(object):
                         batch = filtered_batch
                         # log finished requests
                         for i, batch_ in enumerate(batch):
-                            seq = batch_.batch['seq']
+                            seq = batch_.batch['input_ids']
                             attention_mask = batch_.batch['attention_mask']
                             seq = seq[attention_mask.bool()]
-                            response_mask = batch_.batch['response_mask'][attention_mask.bool()]
+                            response_length = batch_.batch['response_mask'].sum(dim=-1)
+                            rid = batch_.batch['rids']
+                            rid = decode_tensor_to_string(rid)
+                            cache_length = cached_old_log_probs[rid]['response_mask'].sum(dim=-1)
                             # log seq and response_mask
                             artifacts[f'seq_{i}'] = seq.detach().cpu()
-                            artifacts[f'response_mask_{i}'] = response_mask.detach().cpu()
+                            artifacts[f'response_length_{i}'] = response_length.detach().cpu()
+                            artifacts[f'cache_length_{i}'] = cache_length.detach().cpu()
 
                         # log lengths
                         artifacts['lengths'] = batch.batch['response_mask'].sum(dim=-1).detach().cpu()
