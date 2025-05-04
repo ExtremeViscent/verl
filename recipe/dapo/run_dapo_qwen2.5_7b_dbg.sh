@@ -12,7 +12,7 @@ group_shuffle=$1
 partial_rollout=$2
 
 
-adv_estimator=grpo
+adv_estimator=gae
 
 kl_coef=0.0
 use_kl_loss=False
@@ -132,6 +132,19 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=${sp_size} \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
+    critic.model.path="${MODEL_PATH}" \
+    critic.model.enable_gradient_checkpointing=True \
+    critic.use_dynamic_bsz=${use_dynamic_bsz} \
+    critic.forward_max_token_len_per_gpu=${infer_ppo_max_token_len} \
+    critic.ppo_max_token_len_per_gpu=${actor_ppo_max_token_len} \
+    critic.forward_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
+    critic.ppo_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
+    critic.ppo_mini_batch_size=${train_prompt_mini_bsz} \
+    critic.model.fsdp_config.param_offload=${offload} \
+    critic.model.fsdp_config.optimizer_offload=${offload} \
+    critic.model.use_remove_padding=True \
+    critic.ulysses_sequence_parallel_size=${sp_size} \
+    critic.optim.lr=1e-6 \
     +custom_reward_function.overlong_buffer.enable=${enable_overlong_buffer} \
     +custom_reward_function.overlong_buffer.len=${overlong_buffer_len} \
     +custom_reward_function.overlong_buffer.penalty_factor=${overlong_penalty_factor} \

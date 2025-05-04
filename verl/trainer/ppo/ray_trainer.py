@@ -1091,6 +1091,14 @@ class RayPPOTrainer(object):
                         # compute global_valid tokens
                         batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
 
+                        # log cached lengths
+                        cache_lengths_dict = {}
+                        for rid, batch_ in cached_old_log_probs.items():
+                            if batch_['response_mask'] is not None:
+                                cache_lengths_dict[rid] = batch_['response_mask'].sum(dim=-1)
+                            else:
+                                cache_lengths_dict[rid] = torch.zeros(0)
+
                         # recompute old_log_probs
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
@@ -1123,18 +1131,27 @@ class RayPPOTrainer(object):
                             filtered_batch = batch
                         batch = filtered_batch
                         # log finished requests
+                        seqs = []
+                        full_lengths = []
+                        response_lengths = []
+                        cache_lengths = []
                         for i, batch_ in enumerate(batch):
                             seq = batch_.batch['input_ids']
                             attention_mask = batch_.batch['attention_mask']
                             seq = seq[attention_mask.bool()]
+                            full_lengths.append(seq.size(0))
+                            seqs.append(seq)
                             response_length = batch_.batch['response_mask'].sum(dim=-1)
                             rid = batch_.batch['rids']
                             rid = decode_tensor_to_string(rid)
-                            cache_length = cached_old_log_probs[rid]['response_mask'].sum(dim=-1)
+                            cache_length = cache_lengths_dict[rid].sum(dim=-1)
                             # log seq and response_mask
-                            artifacts[f'seq_{i}'] = seq.detach().cpu()
-                            artifacts[f'response_length_{i}'] = response_length.detach().cpu()
-                            artifacts[f'cache_length_{i}'] = cache_length.detach().cpu()
+                            response_lengths.append(response_length)
+                            cache_lengths.append(cache_length)
+                        artifacts['seqs'] = torch.cat(seqs, dim=0).detach().cpu()
+                        artifacts['full_lengths'] = torch.tensor(full_lengths).detach().cpu()
+                        artifacts['response_lengths'] = torch.stack(response_lengths).detach().cpu()
+                        artifacts['cache_lengths'] = torch.stack(cache_lengths).detach().cpu()
 
                         # log lengths
                         artifacts['lengths'] = batch.batch['response_mask'].sum(dim=-1).detach().cpu()
