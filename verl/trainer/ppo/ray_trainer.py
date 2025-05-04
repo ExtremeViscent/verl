@@ -1168,8 +1168,9 @@ class RayPPOTrainer(object):
                                 values = self.critic_wg.compute_values(batch)
                                 batch = batch.union(values)
                                 # log values
-                                artifacts['values'] = batch.batch['values'].detach().cpu()
-
+                                value_tensor = batch.batch['values'].detach().cpu()
+                                values = value_tensor[batch.batch['response_mask'].bool()]
+                                artifacts['values'] = values
                         with _timer('adv', timing_raw):
                             # compute scores. Support both model and function-based.
                             # We first compute the scores using reward model. Then, we call reward_fn to combine
@@ -1189,7 +1190,7 @@ class RayPPOTrainer(object):
                                 print(f'Error in reward_fn: {e}')
                                 reward_tensor = self.reward_fn(batch)
                                 reward_extra_infos_dict = {}
-                            artifacts['reward'] = reward_tensor.detach().cpu()
+                            artifacts['reward'] = reward_tensor.detach().cpu()[...,-1]
 
                             batch.batch['token_level_scores'] = reward_tensor
 
