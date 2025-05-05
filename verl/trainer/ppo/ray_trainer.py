@@ -914,7 +914,8 @@ class RayPPOTrainer(object):
                 replace_mask = cached_response_mask ^ new_response_mask
                 replaced_tokens += replace_mask.sum().item()
                 replace_mask = replace_mask.to(torch.bool)
-                new_old_log_prob = torch.where(replace_mask, new_old_log_prob, cached_old_log_prob)
+                replace_mask = ~replace_mask
+                new_old_log_prob[replace_mask] = cached_old_log_prob[replace_mask]
                 # new_old_log_prob = new_old_log_prob - torch.logsumexp(new_old_log_prob, dim=-1, keepdim=True)
                 cached_old_log_probs[rid]['old_log_probs'] = new_old_log_prob
                 cached_old_log_probs[rid]['response_mask'] = new_response_mask
@@ -1103,7 +1104,9 @@ class RayPPOTrainer(object):
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
                             batch = batch.union(old_log_prob)
+                            artifacts['old_log_probs_nc'] = batch.batch['old_log_probs'][batch.batch['response_mask'].bool()].detach().cpu()
                             cached_old_log_probs, batch = self.cache_old_log_probs(cached_old_log_probs, batch)
+                            artifacts['old_log_probs'] = batch.batch['old_log_probs'][batch.batch['response_mask'].bool()].detach().cpu()
 
                         # Filter out finished requests
                         if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):

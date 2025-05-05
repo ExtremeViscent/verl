@@ -44,7 +44,7 @@ exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}-DBG
 
 # Ray
 CUDA_VISIBLE_DEVICES_dev="0,1,2,3"
-RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
+RAY_ADDRESS=${RAY_ADDRESS:-"http://node-0:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
@@ -155,7 +155,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=False \
     trainer.test_freq=-1 \
-    trainer.save_freq=1 \
+    trainer.save_freq=-1 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=disable
