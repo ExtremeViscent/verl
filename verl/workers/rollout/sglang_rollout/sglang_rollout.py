@@ -322,6 +322,9 @@ class SGLangRollout(BaseRollout):
         all_rids = prompts.batch['rids']
         bsz = prompts.batch['input_ids'].size(0)
         n = kwargs.get('n', self.config.n)
+        preserve_group = self.config.get('preserve_group', False)
+        if not preserve_group:
+            n = 1
         rids = []
         for i in range(all_rids.shape[0]):
             rids.append([])

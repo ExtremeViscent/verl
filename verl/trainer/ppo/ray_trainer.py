@@ -983,6 +983,7 @@ class RayPPOTrainer(object):
                         batch_keys=['input_ids', 'attention_mask', 'position_ids'],
                         non_tensor_batch_keys=['raw_prompt_ids'],
                     )
+                n = self.config.actor_rollout_ref.rollout.n
 
                 if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
                     # Prepare rids for group shuffle
@@ -990,11 +991,16 @@ class RayPPOTrainer(object):
                     rid_to_batch = {}
                     rids_tensor = []
                     cached_old_log_probs = {}
+                    preserve_group = getattr(self.config.actor_rollout_ref.rollout, 'preserve_group', True)
+                    if not preserve_group:
+                        macro_batch = macro_batch.repeat(repeat_times=n, interleave=True)
+                        macro_gen_batch = macro_gen_batch.repeat(repeat_times=n, interleave=True)
+                        n = 1
                     for i in range(len(macro_gen_batch)):
                         oid = f"req_{uuid4().hex[:8]}"
                         rids.append([])
                         rids_tensor.append([])
-                        for j in range(self.config.actor_rollout_ref.rollout.n):
+                        for j in range(n):
                             rid = f"{oid}_nid{uuid4().hex[:8]}"
                             rids[-1].append(rid)
                             rid_to_batch[rid] = i
@@ -1124,9 +1130,9 @@ class RayPPOTrainer(object):
                                 if batch.batch['finished'][i]:
                                     n_finished[oid] += 1
                                     finished_batch[oid].append(batch[i])
-                                if n_finished[oid] == self.config.actor_rollout_ref.rollout.n:
+                                if n_finished[oid] == n:
                                     filtered_batch.extend(finished_batch[oid])
-                                if len(filtered_batch) >= self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n:
+                                if len(filtered_batch) >= self.config.data.train_batch_size * n:
                                     break
                             filtered_batch = batch_collate_fn(filtered_batch)
                             print(f'{len(filtered_batch)=}')
@@ -1214,7 +1220,7 @@ class RayPPOTrainer(object):
                                                     adv_estimator=self.config.algorithm.adv_estimator,
                                                     gamma=self.config.algorithm.gamma,
                                                     lam=self.config.algorithm.lam,
-                                                    num_repeat=self.config.actor_rollout_ref.rollout.n)
+                                                    num_repeat=n)
 
                         # update critic
                         if self.use_critic:
