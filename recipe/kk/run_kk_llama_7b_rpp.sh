@@ -10,6 +10,7 @@ fi
 
 group_shuffle=$1
 partial_rollout=$2
+preserve_group=${PRESERVE_GROUP:-True}
 
 adv_estimator=reinforce_plus_plus
 
@@ -31,9 +32,9 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=128
+train_prompt_bsz=64
 n_groups=4
-n_resp_per_prompt=8
+n_resp_per_prompt=16
 train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
@@ -44,6 +45,9 @@ if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
     if [ "${partial_rollout}" = "True" ]; then
         exp_name="${exp_name}-PR"
+        if [ "${preserve_group}" = "True" ]; then
+            exp_name="${exp_name}-PG"
+        fi
     fi
 fi
 
@@ -105,6 +109,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
+    +actor_rollout_ref.rollout.preserve_group=${preserve_group} \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \

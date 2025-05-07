@@ -332,7 +332,7 @@ def compute_policy_loss(old_log_prob,
             the estimated KL divergence between the latest updating policy and the old sampling policy
     """
     seq_len_per_sample = torch.clamp(torch.sum(eos_mask, dim=1), min=1.0)
-    negative_approx_kl = log_prob - log_prob.detach()
+    negative_approx_kl = log_prob - old_log_prob
     ratio = torch.exp(negative_approx_kl)
     ppo_kl = verl_F.masked_mean(-negative_approx_kl, eos_mask)
 

@@ -898,6 +898,7 @@ class RayPPOTrainer(object):
         metrics.update(global_balance_stats)
 
     def cache_old_log_probs(self, cached_old_log_probs, batch: DataProto):
+        return cached_old_log_probs, batch
         replaced_tokens = 0
         for i in range(batch.batch['old_log_probs'].size(0)):
             new_response_mask = batch.batch['response_mask'][i].detach().clone()
