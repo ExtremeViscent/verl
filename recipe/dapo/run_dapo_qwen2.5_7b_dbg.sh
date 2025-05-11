@@ -10,7 +10,7 @@ fi
 
 group_shuffle=$1
 partial_rollout=$2
-
+sort_batch=${SORT_BATCH:-False}
 
 adv_estimator=gae
 
@@ -100,6 +100,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
+    +actor_rollout_ref.actor.sort_batch=${sort_batch} \
     +actor_rollout_ref.rollout.preserve_group=False \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \

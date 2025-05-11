@@ -29,6 +29,7 @@ from collections import defaultdict
 from functools import partial
 from tqdm import tqdm
 from tensordict import TensorDict
+import math
 
 import ray
 import numpy as np
@@ -180,52 +181,86 @@ def compute_response_mask(data: DataProto):
     attention_mask = data.batch['attention_mask']
     return attention_mask[:, -response_length:]
 
+def stratified_minibatches(td: TensorDict, batch_size: int):
+    # 1
+    rewards = td["token_level_scores"].sum(-1)
+    # 2
+    sort_idx = rewards.argsort()
+    # 3
+    n_batches = math.ceil(len(td) / batch_size)
+    batches = [[] for _ in range(n_batches)]
+    # 4
+    for i, idx in enumerate(sort_idx):
+        stripe, pos = divmod(i, n_batches)
+        batch_id = pos if stripe % 2 == 0 else n_batches - 1 - pos
+        batches[batch_id].append(idx)
+    # 5
+    return [td[idxs] for idxs in batches]
 
-def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1):
-    # Back-compatible with trainers that do not compute response mask in fit
-    if "response_mask" not in data.batch.keys():
-        data.batch['response_mask'] = compute_response_mask(data)
-    # prepare response group
-    # TODO: add other ways to estimate advantages
-    if adv_estimator == AdvantageEstimator.GAE:
-        values = data.batch['values']
-        advantages, returns = core_algos.compute_gae_advantage_return(
-            token_level_rewards=data.batch['token_level_rewards'],
-            values=data.batch['values'],
-            eos_mask=data.batch['response_mask'],
-            gamma=gamma,
-            lam=lam)
-        data.batch['advantages'] = advantages
-        data.batch['returns'] = returns
-    elif adv_estimator == AdvantageEstimator.GRPO:
-        advantages, returns = core_algos.compute_grpo_outcome_advantage(
-            token_level_rewards=data.batch['token_level_rewards'],
-            eos_mask=data.batch['response_mask'],
-            index=data.non_tensor_batch['uid'])
-        data.batch['advantages'] = advantages
-        data.batch['returns'] = returns
-    elif adv_estimator == AdvantageEstimator.REINFORCE_PLUS_PLUS:
-        advantages, returns = core_algos.compute_reinforce_plus_plus_outcome_advantage(
-            token_level_rewards=data.batch['token_level_rewards'], eos_mask=data.batch['response_mask'], gamma=gamma)
-        data.batch['advantages'] = advantages
-        data.batch['returns'] = returns
-    elif adv_estimator == AdvantageEstimator.REMAX:
-        advantages, returns = core_algos.compute_remax_outcome_advantage(
-            token_level_rewards=data.batch['token_level_rewards'],
-            reward_baselines=data.batch['reward_baselines'],
-            eos_mask=data.batch['response_mask'])
-
-        data.batch['advantages'] = advantages
-        data.batch['returns'] = returns
-    elif adv_estimator == AdvantageEstimator.RLOO:
-        advantages, returns = core_algos.compute_rloo_outcome_advantage(
-            token_level_rewards=data.batch['token_level_rewards'],
-            eos_mask=data.batch['response_mask'],
-            index=data.non_tensor_batch['uid'])
-        data.batch['advantages'] = advantages
-        data.batch['returns'] = returns
+def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, sort = False, mini_bsz=None):
+    batch = data.batch
+    # print(f"original batch size: {batch.batch_size}")
+    if sort:
+        # sub_batch = []
+        # idx = torch.argsort(batch['responses'].sum(-1), dim=0)
+        # for i in range(0, len(idx), mini_bsz):
+        #     sub_batch.append(batch[idx[i:i + mini_bsz]])
+        sub_batch = stratified_minibatches(batch, mini_bsz)
     else:
-        raise NotImplementedError
+        sub_batch = [batch]
+    for batch in sub_batch:
+        # Back-compatible with trainers that do not compute response mask in fit
+        if "response_mask" not in batch.keys():
+            batch['response_mask'] = compute_response_mask(data)
+        # prepare response group
+        # TODO: add other ways to estimate advantages
+        if adv_estimator == AdvantageEstimator.GAE:
+            values = batch['values']
+            advantages, returns = core_algos.compute_gae_advantage_return(
+                token_level_rewards=batch['token_level_rewards'],
+                values=batch['values'],
+                eos_mask=batch['response_mask'],
+                gamma=gamma,
+                lam=lam)
+            batch['advantages'] = advantages
+            batch['returns'] = returns
+        elif adv_estimator == AdvantageEstimator.GRPO:
+            advantages, returns = core_algos.compute_grpo_outcome_advantage(
+                token_level_rewards=batch['token_level_rewards'],
+                eos_mask=batch['response_mask'],
+                index=data.non_tensor_batch['uid'])
+            batch['advantages'] = advantages
+            batch['returns'] = returns
+        elif adv_estimator == AdvantageEstimator.REINFORCE_PLUS_PLUS:
+            advantages, returns = core_algos.compute_reinforce_plus_plus_outcome_advantage(
+                token_level_rewards=batch['token_level_rewards'], eos_mask=batch['response_mask'], gamma=gamma)
+            batch['advantages'] = advantages
+            batch['returns'] = returns
+        elif adv_estimator == AdvantageEstimator.REMAX:
+            advantages, returns = core_algos.compute_remax_outcome_advantage(
+                token_level_rewards=batch['token_level_rewards'],
+                reward_baselines=batch['reward_baselines'],
+                eos_mask=batch['response_mask'])
+
+            batch['advantages'] = advantages
+            batch['returns'] = returns
+        elif adv_estimator == AdvantageEstimator.RLOO:
+            advantages, returns = core_algos.compute_rloo_outcome_advantage(
+                token_level_rewards=batch['token_level_rewards'],
+                eos_mask=batch['response_mask'],
+                index=data.non_tensor_batch['uid'])
+            batch['advantages'] = advantages
+            batch['returns'] = returns
+        else:
+            raise NotImplementedError
+    if sort:
+        # print(f"data.batch.batch_size: {data.batch.batch_size}")
+        batch = TensorDict.cat(sub_batch)
+        batch.batch_size = data.batch.batch_size
+        data.batch = batch
+        # print(f"batch size: {data.batch.batch_size}")
+    else:
+        data.batch = batch
     return data
 
 
@@ -1100,20 +1135,22 @@ class RayPPOTrainer(object):
                         batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
 
                         # log cached lengths
-                        cache_lengths_dict = {}
-                        for rid, batch_ in cached_old_log_probs.items():
-                            if batch_['response_mask'] is not None:
-                                cache_lengths_dict[rid] = batch_['response_mask'].sum(dim=-1)
-                            else:
-                                cache_lengths_dict[rid] = torch.zeros(0)
+                        if getattr(self.config.actor_rollout_ref.rollout, 'group_shuffle', False):
+                            cache_lengths_dict = {}
+                            for rid, batch_ in cached_old_log_probs.items():
+                                if batch_['response_mask'] is not None:
+                                    cache_lengths_dict[rid] = batch_['response_mask'].sum(dim=-1)
+                                else:
+                                    cache_lengths_dict[rid] = torch.zeros(0)
 
                         # recompute old_log_probs
                         with _timer('old_log_prob', timing_raw):
                             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
                             batch = batch.union(old_log_prob)
-                            artifacts['old_log_probs_nc'] = batch.batch['old_log_probs'][batch.batch['response_mask'].bool()].detach().cpu()
-                            cached_old_log_probs, batch = self.cache_old_log_probs(cached_old_log_probs, batch)
-                            artifacts['old_log_probs'] = batch.batch['old_log_probs'][batch.batch['response_mask'].bool()].detach().cpu()
+                            if self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+                                artifacts['old_log_probs_nc'] = batch.batch['old_log_probs'][batch.batch['response_mask'].bool()].detach().cpu()
+                                cached_old_log_probs, batch = self.cache_old_log_probs(cached_old_log_probs, batch)
+                                artifacts['old_log_probs'] = batch.batch['old_log_probs'][batch.batch['response_mask'].bool()].detach().cpu()
 
                         # Filter out finished requests
                         if self.config.actor_rollout_ref.rollout.get('group_shuffle', False):
@@ -1141,27 +1178,27 @@ class RayPPOTrainer(object):
                             filtered_batch = batch
                         batch = filtered_batch
                         # log finished requests
-                        seqs = []
-                        full_lengths = []
-                        response_lengths = []
-                        cache_lengths = []
-                        for i, batch_ in enumerate(batch):
-                            seq = batch_.batch['input_ids']
-                            attention_mask = batch_.batch['attention_mask']
-                            seq = seq[attention_mask.bool()]
-                            full_lengths.append(seq.size(0))
-                            seqs.append(seq)
-                            response_length = batch_.batch['response_mask'].sum(dim=-1)
-                            rid = batch_.batch['rids']
-                            rid = decode_tensor_to_string(rid)
-                            cache_length = cache_lengths_dict[rid].sum(dim=-1)
-                            # log seq and response_mask
-                            response_lengths.append(response_length)
-                            cache_lengths.append(cache_length)
-                        artifacts['seqs'] = torch.cat(seqs, dim=0).detach().cpu()
-                        artifacts['full_lengths'] = torch.tensor(full_lengths).detach().cpu()
-                        artifacts['response_lengths'] = torch.stack(response_lengths).detach().cpu()
-                        artifacts['cache_lengths'] = torch.stack(cache_lengths).detach().cpu()
+                        # seqs = []
+                        # full_lengths = []
+                        # response_lengths = []
+                        # cache_lengths = []
+                        # for i, batch_ in enumerate(batch):
+                        #     seq = batch_.batch['input_ids']
+                        #     attention_mask = batch_.batch['attention_mask']
+                        #     seq = seq[attention_mask.bool()]
+                        #     full_lengths.append(seq.size(0))
+                        #     seqs.append(seq)
+                        #     response_length = batch_.batch['response_mask'].sum(dim=-1)
+                        #     rid = batch_.batch['rids']
+                        #     rid = decode_tensor_to_string(rid)
+                        #     cache_length = cache_lengths_dict[rid].sum(dim=-1)
+                        #     # log seq and response_mask
+                        #     response_lengths.append(response_length)
+                        #     cache_lengths.append(cache_length)
+                        # artifacts['seqs'] = torch.cat(seqs, dim=0).detach().cpu()
+                        # artifacts['full_lengths'] = torch.tensor(full_lengths).detach().cpu()
+                        # artifacts['response_lengths'] = torch.stack(response_lengths).detach().cpu()
+                        # artifacts['cache_lengths'] = torch.stack(cache_lengths).detach().cpu()
 
                         # log lengths
                         artifacts['lengths'] = batch.batch['response_mask'].sum(dim=-1).detach().cpu()
@@ -1221,7 +1258,10 @@ class RayPPOTrainer(object):
                                                     adv_estimator=self.config.algorithm.adv_estimator,
                                                     gamma=self.config.algorithm.gamma,
                                                     lam=self.config.algorithm.lam,
-                                                    num_repeat=n)
+                                                    num_repeat=n,
+                                                    sort = self.config.actor_rollout_ref.actor.get('sort_batch', False),
+                                                    mini_bsz = self.config.actor_rollout_ref.actor.ppo_mini_batch_size,
+                            )
 
                         # update critic
                         if self.use_critic:

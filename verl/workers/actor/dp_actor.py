@@ -21,6 +21,8 @@ from typing import Iterable, Tuple
 import torch
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+import tensordict
+from tensordict import TensorDict
 
 from verl import DataProto
 from verl.trainer.ppo import core_algos
@@ -237,6 +239,18 @@ class DataParallelPPOActor(BasePPOActor):
 
         return log_probs
 
+    def sort_batch(self, batch: TensorDict):
+        response_length = batch['responses'].size(-1)
+        response_mask = batch['attention_mask'][:, -response_length:]
+        sorted_indices = torch.argsort(response_mask.sum(dim=-1), dim=0)
+        new_data = []
+        for idx in sorted_indices:
+            new_data.append(batch[idx])
+        new_batch = tensordict.stack(new_data, dim=0)
+        new_batch.batch_size = batch.batch_size
+        return new_batch
+        
+
     def update_policy(self, data: DataProto):
         # make sure we are in training mode
         self.actor_module.train()
@@ -248,6 +262,10 @@ class DataParallelPPOActor(BasePPOActor):
             select_keys.append('ref_log_prob')
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = 'multi_modal_inputs' in data.non_tensor_batch.keys()
+    
+
+        if self.config.get('sort_batch', False):
+            batch = self.sort_batch(batch)
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
