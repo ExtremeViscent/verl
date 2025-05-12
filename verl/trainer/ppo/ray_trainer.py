@@ -201,11 +201,13 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     batch = data.batch
     # print(f"original batch size: {batch.batch_size}")
     if sort:
-        # sub_batch = []
-        # idx = torch.argsort(batch['responses'].sum(-1), dim=0)
-        # for i in range(0, len(idx), mini_bsz):
-        #     sub_batch.append(batch[idx[i:i + mini_bsz]])
-        sub_batch = stratified_minibatches(batch, mini_bsz)
+        sub_batch = []
+        rewards = batch['token_level_scores'].sum(-1)
+        response_length = batch['response_mask'].sum(-1)
+        idx = torch.argsort(response_length, dim=0)
+        for i in range(0, len(idx), mini_bsz):
+            sub_batch.append(batch[idx[i:i + mini_bsz]])
+        # sub_batch = stratified_minibatches(batch, mini_bsz)
     else:
         sub_batch = [batch]
     for batch in sub_batch:

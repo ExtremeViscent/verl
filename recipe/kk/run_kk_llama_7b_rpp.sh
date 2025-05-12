@@ -33,7 +33,7 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=128
+train_prompt_bsz=512
 n_groups=4
 n_resp_per_prompt=8
 train_prompt_mini_bsz=128
@@ -52,7 +52,7 @@ if [ "${group_shuffle}" = "True" ]; then
     fi
 fi
 if [ "${sort_batch}" = "True" ]; then
-    exp_name="${exp_name}-SBR"
+    exp_name="${exp_name}-SB"
 fi
 
 # Ray
@@ -63,7 +63,7 @@ NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.1-8B-Instruct"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts_bugfix/${project_name}/${exp_name}"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/kk/train.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/kk/test.parquet"}
 # TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
