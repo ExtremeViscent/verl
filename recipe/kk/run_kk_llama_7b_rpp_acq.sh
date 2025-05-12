@@ -8,19 +8,12 @@ if [ $# -ne 2 ]; then
     exit 1
 fi
 
-# No-op if hostname is not node-0
-if [ "$(hostname)" != "node-0" ]; then
-    echo "This script should only be run on node-0."
-    exit 0
-fi
-
-
 group_shuffle=$1
 partial_rollout=$2
 preserve_group=${PRESERVE_GROUP:-True}
 oversubscribe=${OVERSUB:-False}
 
-adv_estimator=gae
+adv_estimator=reinforce_plus_plus
 
 kl_coef=0.0
 use_kl_loss=False
@@ -30,7 +23,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 12))
+max_response_length=$((1024 * 8))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
@@ -42,13 +35,13 @@ filter_groups_metric=acc
 max_num_gen_batches=10
 train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=4
-train_prompt_mini_bsz=512
+n_resp_per_prompt=8
+train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-PPO'
-exp_name=Qwen2.5-32B
+project_name='LogicRL-RPP'
+exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}-ACQUISITION
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
     if [ "${partial_rollout}" = "True" ]; then
@@ -64,16 +57,17 @@ if [ "${oversubscribe}" = "True" ]; then
 fi
 
 # Ray
-RAY_ADDRESS=${RAY_ADDRESS:-"http://node-0:8265"}
+RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"qwen/Qwen2.5-32B"}
+MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.1-8B-Instruct"}
 CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
-TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/kk/train.parquet"}
+TEST_FILE=${TEST_FILE:-"${HOME}/data/kk/test.parquet"}
+# TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
 mkdir -p "${CKPTS_DIR}"
 
@@ -83,17 +77,15 @@ top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Performance Related Parameter
-sp_size=8
+sp_size=1
 use_dynamic_bsz=True
 actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
 infer_ppo_max_token_len=$((max_prompt_length + max_response_length))
 offload=True
-gen_tp=8
+gen_tp=4
 
 
-ray job submit --runtime-env="${RUNTIME_ENV}" \
-    --working-dir "${WORKING_DIR}" \
-    -- python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TEST_FILE" \
@@ -122,6 +114,8 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
+    +actor_rollout_ref.rollout.preserve_group=${preserve_group} \
+    +actor_rollout_ref.rollout.oversubscribe=${oversubscribe} \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \
@@ -154,30 +148,17 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     actor_rollout_ref.ref.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=${sp_size} \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
-    critic.model.path="${MODEL_PATH}" \
-    critic.model.enable_gradient_checkpointing=True \
-    critic.use_dynamic_bsz=${use_dynamic_bsz} \
-    critic.forward_max_token_len_per_gpu=${infer_ppo_max_token_len} \
-    critic.ppo_max_token_len_per_gpu=${actor_ppo_max_token_len} \
-    critic.forward_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
-    critic.ppo_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
-    critic.ppo_mini_batch_size=${train_prompt_mini_bsz} \
-    critic.model.fsdp_config.param_offload=${offload} \
-    critic.model.fsdp_config.optimizer_offload=${offload} \
-    critic.model.use_remove_padding=True \
-    critic.ulysses_sequence_parallel_size=${sp_size} \
-    critic.optim.lr=1e-6 \
     +custom_reward_function.overlong_buffer.enable=${enable_overlong_buffer} \
     +custom_reward_function.overlong_buffer.len=${overlong_buffer_len} \
     +custom_reward_function.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
-    trainer.n_gpus_per_node=8 \
-    trainer.nnodes="${NNODES}" \
-    trainer.val_before_train=False \
+    trainer.n_gpus_per_node=4 \
+    trainer.nnodes=1 \
+    trainer.val_before_train=True \
     trainer.test_freq=10 \
-    trainer.save_freq=10 \
+    trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=auto
