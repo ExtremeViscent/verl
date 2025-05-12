@@ -1153,8 +1153,6 @@ class RayPPOTrainer(object):
                             full_lengths.append(seq.size(0))
                             seqs.append(seq)
                             response_length = batch_.batch['response_mask'].sum(dim=-1)
-                            rid = batch_.batch['rids']
-                            rid = decode_tensor_to_string(rid)
                             # log seq and response_mask
                             response_lengths.append(response_length)
                         artifacts['seqs'] = torch.cat(seqs, dim=0).detach().cpu()
