@@ -1018,6 +1018,7 @@ class RayPPOTrainer(object):
                     macro_gen_batch.meta_info['n_groups'] = n_groups
                     macro_gen_batch.meta_info['group_shuffle'] = True
                     n_iter = min(n_groups, ceil(macro_gen_batch.batch['input_ids'].size(0) / self.config.data.train_batch_size))
+                    n_iter = 1 if getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False) else n_iter
                     self.actor_rollout_wg.feed_group_cache(macro_gen_batch)
                 elif getattr(self.config.actor_rollout_ref.rollout, 'oversubscribe', False):
                     n_iter = 1

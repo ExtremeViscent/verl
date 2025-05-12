@@ -11,6 +11,7 @@ fi
 group_shuffle=$1
 partial_rollout=$2
 preserve_group=${PRESERVE_GROUP:-True}
+oversubscribe=${OVERSUB:-False}
 
 adv_estimator=reinforce_plus_plus
 
@@ -32,9 +33,9 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=64
+train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=16
+n_resp_per_prompt=8
 train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
@@ -49,6 +50,10 @@ if [ "${group_shuffle}" = "True" ]; then
             exp_name="${exp_name}-PG"
         fi
     fi
+fi
+
+if [ "${oversubscribe}" = "True" ]; then
+    exp_name="${exp_name}-OS"
 fi
 
 # Ray
@@ -110,6 +115,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
     +actor_rollout_ref.rollout.preserve_group=${preserve_group} \
+    +actor_rollout_ref.rollout.oversubscribe=${oversubscribe} \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \
@@ -149,7 +155,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \
-    trainer.nnodes="${NNODES}" \
+    trainer.nnodes=1 \
     trainer.val_before_train=True \
     trainer.test_freq=10 \
     trainer.save_freq=20 \

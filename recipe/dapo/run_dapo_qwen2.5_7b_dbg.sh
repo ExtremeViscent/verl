@@ -100,7 +100,8 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
-    +actor_rollout_ref.rollout.preserve_group=False \
+    +actor_rollout_ref.rollout.preserve_group=True \
+    +actor_rollout_ref.rollout.oversubscribe=True \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \
@@ -153,7 +154,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \
-    trainer.nnodes="${NNODES}" \
+    trainer.nnodes=1 \
     trainer.val_before_train=False \
     trainer.test_freq=-1 \
     trainer.save_freq=-1 \
