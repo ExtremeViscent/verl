@@ -258,6 +258,13 @@ def update_rids(macro_batch, rid_to_batch, cached_old_log_probs):
     macro_batch.batch['rids'] = torch.stack(new_rids_tensor)
     return macro_batch, rid_map, rid_to_batch, cached_old_log_probs
     
+def get_mean_reward(batch_list_1, batch_list_2):
+    reward_1 = [b.batch['token_level_scores'].sum().item() for b in batch_list_1]
+    reward_2 = [b.batch['token_level_scores'].sum().item() for b in batch_list_2]
+    rewards = reward_1 + reward_2
+    mean_reward = np.mean(rewards)
+    return mean_reward
+
 
 
 class RayPPOTrainer(object):
@@ -965,6 +972,11 @@ class RayPPOTrainer(object):
         self.global_steps += 1
         last_val_metrics = None
 
+        reward_history = []
+        reward_window = 4
+        cached_positive = [[] for _ in range(reward_window)]
+        cached_negative = [[] for _ in range(reward_window)]
+
         for epoch in range(self.config.trainer.total_epochs):
             for macro_batch_dict in self.train_dataloader:
                 metrics = {}
@@ -1203,6 +1215,57 @@ class RayPPOTrainer(object):
                             artifacts['reward'] = reward_tensor.detach().cpu()[...,-1]
 
                             batch.batch['token_level_scores'] = reward_tensor
+
+                            # reward moving average
+                            mean_reward = reward_tensor.sum(dim=-1).mean().item()
+                            if len(reward_history) < reward_window:
+                                reward_history.append(mean_reward)
+                            else:
+                                reward_history.pop(0)
+                                reward_history.append(mean_reward)
+                            reward_ma = np.mean(reward_history)
+
+                            # Drop and Cache samples to keep around MA
+                            if len(reward_history) == reward_window:
+                                bsz = batch.batch.batch_size[0]
+                                var_lim = bsz // 4
+                                filtered_batch = [batch[i] for i in range(bsz)]
+                                expiring_batch = cached_positive.pop(0)
+                                expiring_batch.extend(cached_negative.pop(0))
+                                cached_positive.append([])
+                                cached_negative.append([])
+                                for i in range(var_lim):
+                                    reward_tensor = [b.batch['token_level_scores'].sum().item() for b in filtered_batch]
+                                    reward_tensor = torch.tensor(reward_tensor)
+                                    sorted_idx = torch.argsort(reward_tensor, descending=True).tolist()
+                                    if get_mean_reward(filtered_batch, expiring_batch) > reward_ma:
+                                        # Swap out high reward samples
+                                        idx = sorted_idx.pop[0]
+                                        print(f'{idx=}, {sorted_idx=}')
+                                        to_cache = filtered_batch.pop(idx)
+                                        cached_positive[-1].append(to_cache)
+                                        # Swap in low reward samples
+                                        for batch_ in cached_negative:
+                                            if len(batch_) > 0:
+                                                to_replace = batch_.pop(0)
+                                                filtered_batch.append(to_replace)
+                                                break
+                                    else:
+                                        # Swap out low reward samples
+                                        idx = sorted_idx[-1]
+                                        print(f'{idx=}')
+                                        to_cache = filtered_batch.pop(idx)
+                                        cached_negative[-1].append(to_cache)
+                                        # Swap in high reward samples
+                                        for batch_ in cached_positive:
+                                            if len(batch_) > 0:
+                                                to_replace = batch_.pop(0)
+                                                filtered_batch.append(to_replace)
+                                                break
+                                filtered_batch.extend(expiring_batch)
+                                batch = batch_collate_fn(filtered_batch)
+
+
 
                             # compute rewards. apply_kl_penalty if available
                             print(f'{list(reward_extra_infos_dict.keys())=}')
