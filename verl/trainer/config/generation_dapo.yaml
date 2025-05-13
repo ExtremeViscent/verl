@@ -10,7 +10,8 @@ data:
   batch_size: 512
 
 model:
-  path: qwen/Qwen2.5-32B
+  # path: /home/aiscuser/.cache/huggingface/hub/models--qwen--Qwen2.5-32B/snapshots/1818d35814b8319459f4bd55ed1ac8709630f003
+  path: /tmp/Qwen-2.5-32B-200
   external_lib: null
 rollout:
   name: sglang
