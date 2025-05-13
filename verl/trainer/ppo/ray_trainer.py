@@ -1101,12 +1101,13 @@ class RayPPOTrainer(object):
                         batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
 
                         # log cached lengths
-                        # cache_lengths_dict = {}
-                        # for rid, batch_ in cached_old_log_probs.items():
-                        #     if batch_['response_mask'] is not None:
-                        #         cache_lengths_dict[rid] = batch_['response_mask'].sum(dim=-1)
-                        #     else:
-                        #         cache_lengths_dict[rid] = torch.zeros(0)
+                        if self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+                            cache_lengths_dict = {}
+                            for rid, batch_ in cached_old_log_probs.items():
+                                if batch_['response_mask'] is not None:
+                                    cache_lengths_dict[rid] = batch_['response_mask'].sum(dim=-1)
+                                else:
+                                    cache_lengths_dict[rid] = torch.zeros(0)
 
                         # recompute old_log_probs
                         with _timer('old_log_prob', timing_raw):
@@ -1155,6 +1156,11 @@ class RayPPOTrainer(object):
                             response_length = batch_.batch['response_mask'].sum(dim=-1)
                             # log seq and response_mask
                             response_lengths.append(response_length)
+                            if self.config.actor_rollout_ref.rollout.get('partial_rollout', False):
+                                rid = batch_.batch['rids']
+                                rid = decode_tensor_to_string(rid)
+                                cache_length = cache_lengths_dict[rid]
+                                artifacts['cache_lengths'] = cache_length
                         artifacts['seqs'] = torch.cat(seqs, dim=0).detach().cpu()
                         artifacts['full_lengths'] = torch.tensor(full_lengths).detach().cpu()
                         artifacts['response_lengths'] = torch.stack(response_lengths).detach().cpu()
@@ -1218,6 +1224,7 @@ class RayPPOTrainer(object):
                                                     gamma=self.config.algorithm.gamma,
                                                     lam=self.config.algorithm.lam,
                                                     num_repeat=n)
+                            artifacts['advantages'] = batch.batch['advantages'].detach().cpu()
 
                         # update critic
                         if self.use_critic:
