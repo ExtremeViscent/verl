@@ -21,7 +21,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 10))
+max_response_length=$((1024 * 12))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
@@ -33,7 +33,7 @@ filter_groups_metric=acc
 max_num_gen_batches=10
 train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=8
+n_resp_per_prompt=4
 train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
@@ -54,9 +54,9 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.1-8B-Instruct"}
+MODEL_PATH=${MODEL_PATH:-"deepseek-ai/DeepSeek-R1-Distill-Llama-8B"}
 CKPTS_DIR=${CKPTS_DIR:-"/tmp/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/kk/train.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
 TEST_FILE=${TEST_FILE:-"${HOME}/data/kk/test.parquet"}
 # TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
