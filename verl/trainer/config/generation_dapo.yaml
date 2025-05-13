@@ -10,7 +10,7 @@ data:
   batch_size: 512
 
 model:
-  path: /tmp/Qwen-2.5-32B-GS-PR-nc
+  path: qwen/Qwen2.5-32B
   external_lib: null
 rollout:
   name: sglang
@@ -26,7 +26,7 @@ rollout:
   enforce_eager: True
   free_cache_engine: True
   load_format: dummy_dtensor
-  tensor_model_parallel_size: 4
+  tensor_model_parallel_size: 8
   max_num_batched_tokens: 10240
   max_model_len: null
   max_num_seqs: 1024
