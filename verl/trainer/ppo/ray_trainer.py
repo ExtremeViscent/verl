@@ -1261,8 +1261,8 @@ class RayPPOTrainer(object):
                                                     gamma=self.config.algorithm.gamma,
                                                     lam=self.config.algorithm.lam,
                                                     num_repeat=n,
-                                                    sort = self.config.actor_rollout_ref.actor.get('sort_batch', False),
-                                                    mini_bsz = self.config.actor_rollout_ref.actor.ppo_mini_batch_size,
+                                                    # sort = self.config.actor_rollout_ref.actor.get('sort_batch', False),
+                                                    # mini_bsz = self.config.actor_rollout_ref.actor.ppo_mini_batch_size,
                             )
 
                         # update critic

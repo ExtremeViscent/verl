@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-# usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle>
+# usage: 
+# CUDA_VISIBLE_DEVICES=0,1,2,3 SORT_MODE=cluster SORT_METRIC=reward bash /home/aiscuser/verl/recipe/kk/sorting/run_kk_llama_7b_rpp.sh False False
 
 if [ $# -ne 2 ]; then
     echo "Usage: ./run_dapo_qwen2.5_7b.sh <group_shuffle> <partial_rollout>"
@@ -10,10 +11,11 @@ fi
 
 group_shuffle=$1
 partial_rollout=$2
-sort_batch=${SORT_BATCH:-True}
-norm_adv=${NORM_ADV:-True}
-
-adv_estimator=gae
+preserve_group=${PRESERVE_GROUP:-True}
+sort_batch=${SORT_BATCH:-False}
+sort_mode=${SORT_MODE:-"cluster"}
+sort_metric=${SORT_METRIC:-"reward"}
+adv_estimator=reinforce_plus_plus
 
 kl_coef=0.0
 use_kl_loss=False
@@ -23,7 +25,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 1))
+max_response_length=$((1024 * 8))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
@@ -33,28 +35,40 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=32
+train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=4
-train_prompt_mini_bsz=32
+n_resp_per_prompt=8
+train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='DAPO-DBG'
-exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}-DBG
+project_name='LogicRL-Sort'
+exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}-${sort_mode}-${sort_metric}
+if [ "${group_shuffle}" = "True" ]; then
+    exp_name="${exp_name}-GS"
+    if [ "${partial_rollout}" = "True" ]; then
+        exp_name="${exp_name}-PR-NoIS"
+    fi
+    if [ "${preserve_group}" = "False" ]; then
+        exp_name="${exp_name}-NoPG"
+    fi
+fi
+if [ "${sort_batch}" = "True" ]; then
+    exp_name="${exp_name}-SB"
+fi
 
 # Ray
-CUDA_VISIBLE_DEVICES_dev="4,5,6,7"
-RAY_ADDRESS=${RAY_ADDRESS:-"http://node-0:8265"}
+RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-3B"}
-CKPTS_DIR=${CKPTS_DIR:-"/tmp/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
-TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.1-8B-Instruct"}
+CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
+TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/kk/train.parquet"}
+TEST_FILE=${TEST_FILE:-"${HOME}/data/kk/test.parquet"}
+# TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
 
 mkdir -p "${CKPTS_DIR}"
 
@@ -101,11 +115,11 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.rollout.group_shuffle=${group_shuffle} \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
+    +actor_rollout_ref.rollout.preserve_group=${preserve_group} \
     +actor_rollout_ref.actor.sort_batch=${sort_batch} \
-    +actor_rollout_ref.actor.norm_adv=${norm_adv} \
-    +actor_rollout_ref.actor.sort_metric='reward' \
-    +actor_rollout_ref.actor.sort_mode='scatter' \
-    +actor_rollout_ref.rollout.preserve_group=False \
+    +actor_rollout_ref.actor.norm_adv=True \
+    +actor_rollout_ref.actor.sort_metric=${sort_metric} \
+    +actor_rollout_ref.actor.sort_mode=${sort_mode} \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \
@@ -123,7 +137,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${sp_size} \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.20 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \
@@ -138,30 +152,17 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=${sp_size} \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
-    critic.model.path="${MODEL_PATH}" \
-    critic.model.enable_gradient_checkpointing=True \
-    critic.use_dynamic_bsz=${use_dynamic_bsz} \
-    critic.forward_max_token_len_per_gpu=${infer_ppo_max_token_len} \
-    critic.ppo_max_token_len_per_gpu=${actor_ppo_max_token_len} \
-    critic.forward_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
-    critic.ppo_micro_batch_size_per_gpu=${train_micro_bsz_per_gpu} \
-    critic.ppo_mini_batch_size=${train_prompt_mini_bsz} \
-    critic.model.fsdp_config.param_offload=${offload} \
-    critic.model.fsdp_config.optimizer_offload=${offload} \
-    critic.model.use_remove_padding=True \
-    critic.ulysses_sequence_parallel_size=${sp_size} \
-    critic.optim.lr=1e-6 \
     +custom_reward_function.overlong_buffer.enable=${enable_overlong_buffer} \
     +custom_reward_function.overlong_buffer.len=${overlong_buffer_len} \
     +custom_reward_function.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console'] \
+    trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
-    trainer.val_before_train=False \
-    trainer.test_freq=-1 \
-    trainer.save_freq=-1 \
+    trainer.val_before_train=True \
+    trainer.test_freq=10 \
+    trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=disable

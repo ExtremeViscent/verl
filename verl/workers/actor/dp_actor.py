@@ -23,6 +23,7 @@ from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import tensordict
 from tensordict import TensorDict
+from omegaconf import open_dict
 
 from verl import DataProto
 from verl.trainer.ppo import core_algos
@@ -54,6 +55,13 @@ class DataParallelPPOActor(BasePPOActor):
         print(f'Actor use_remove_padding={self.use_remove_padding}')
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = self.ulysses_sequence_parallel_size > 1
+
+        if self.config.get('sort_batch', False):
+            # Colored warning for norm_adv
+            if not self.config.get('norm_adv', False):
+                print("WARNING: norm_adv is not set to True due to sort_batch=True. ")
+                with open_dict(self.config):
+                    self.config.norm_adv = True
 
         self.compute_entropy_from_logits = (
             torch.compile(verl_F.entropy_from_logits, dynamic=True)
@@ -239,15 +247,51 @@ class DataParallelPPOActor(BasePPOActor):
 
         return log_probs
 
-    def sort_batch(self, batch: TensorDict):
-        response_length = batch['responses'].size(-1)
-        response_mask = batch['attention_mask'][:, -response_length:]
-        sorted_indices = torch.argsort(response_mask.sum(dim=-1), dim=0)
-        new_data = []
-        for idx in sorted_indices:
-            new_data.append(batch[idx])
-        new_batch = tensordict.stack(new_data, dim=0)
-        new_batch.batch_size = batch.batch_size
+    def sort_batch(
+        self,
+        batch: TensorDict,
+        metric: str = "length",
+        mode: str = "cluster",
+    ) -> TensorDict:
+        """
+        Re-order a TensorDict along dim 0.
+
+        Args
+        ----
+        batch   : TensorDict  - shape [B, …]
+        metric  : 'length' | 'reward'
+        mode    : 'cluster' | 'scatter'
+
+        Returns
+        -------
+        TensorDict with same fields, re-ordered, and
+        `.batch_size` preserved.
+        """
+        # --- build the base sort index -----------------------------------------
+        if metric == "length":
+            lengths = batch["attention_mask"].sum(-1)      # [B]
+            sort_idx = lengths.argsort(descending=False)   # shortest → longest
+        elif metric == "reward":
+            rewards = batch["advantages"][..., -1]      # [B]
+            sort_idx = rewards.argsort(descending=False)   # lowest → highest
+        else:
+            raise ValueError(f"Unsupported metric: {metric}")
+
+        # --- optionally scatter extremes for diversity -------------------------
+        if mode == "scatter":
+            # head = 0,2,4,… ; tail = last,last-2,…
+            head = sort_idx[::2]
+            tail = sort_idx.flip(0)[::2]
+            reorder_idx = torch.stack((head, tail), 1).flatten()[: len(sort_idx)]
+        elif mode == "cluster":
+            reorder_idx = sort_idx
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+
+        # --- materialise the new batch using your original pattern -------------
+        new_batch_list = [batch[i] for i in reorder_idx]      # Python loop
+        new_batch = tensordict.stack(new_batch_list, dim=0)
+        new_batch.batch_size = batch.batch_size               # manual carry-over
         return new_batch
         
 
@@ -265,7 +309,9 @@ class DataParallelPPOActor(BasePPOActor):
     
 
         if self.config.get('sort_batch', False):
-            batch = self.sort_batch(batch)
+            batch = self.sort_batch(batch, 
+                                      metric=self.config.get('sort_metric', 'length'),
+                                        mode=self.config.get('sort_mode', 'cluster'))
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
@@ -324,7 +370,8 @@ class DataParallelPPOActor(BasePPOActor):
                                                                        cliprange=clip_ratio,
                                                                        cliprange_low=clip_ratio_low,
                                                                        cliprange_high=clip_ratio_high,
-                                                                       loss_agg_mode=loss_agg_mode)
+                                                                       loss_agg_mode=loss_agg_mode,
+                                                                       norm_adv=self.config.get('norm_adv', False))
                     # compute entropy loss from entropy
                     entropy_loss = verl_F.masked_mean(entropy, response_mask)
 
