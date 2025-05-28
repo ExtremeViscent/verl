@@ -228,6 +228,7 @@ def compute_reinforce_plus_plus_outcome_advantage(token_level_rewards: torch.Ten
             running_return = running_return * eos_mask[:, t]
 
         # advantages = verl_F.masked_whiten(returns, eos_mask)
+        advantages = returns
         advantages = advantages * eos_mask
 
     return advantages, returns
