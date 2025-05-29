@@ -12,7 +12,8 @@ fi
 group_shuffle=$1
 partial_rollout=$2
 preserve_group=${PRESERVE_GROUP:-True}
-sort_batch=${SORT_BATCH:-False}
+norm_adv=${NORM_ADV:-True}
+sort_batch=${SORT_BATCH:-True}
 sort_mode=${SORT_MODE:-"cluster"}
 sort_metric=${SORT_METRIC:-"reward"}
 adv_estimator=reinforce_plus_plus
@@ -39,11 +40,11 @@ train_prompt_bsz=128
 n_groups=4
 n_resp_per_prompt=8
 train_prompt_mini_bsz=128
-train_micro_bsz_per_gpu=4
-infer_micro_bsz_per_gpu=8
+train_micro_bsz_per_gpu=16
+infer_micro_bsz_per_gpu=32
 
 project_name='LogicRL-Sort'
-exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}-${sort_mode}-${sort_metric}
+exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}-bn
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
     if [ "${partial_rollout}" = "True" ]; then
@@ -54,7 +55,7 @@ if [ "${group_shuffle}" = "True" ]; then
     fi
 fi
 if [ "${sort_batch}" = "True" ]; then
-    exp_name="${exp_name}-SB"
+    exp_name="${exp_name}-SB-${sort_mode}-${sort_metric}"
 fi
 
 # Ray
@@ -137,7 +138,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${sp_size} \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.20 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \

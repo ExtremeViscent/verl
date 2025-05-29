@@ -327,6 +327,17 @@ class DataParallelPPOActor(BasePPOActor):
             for batch_idx, data in enumerate(dataloader):
                 # split batch into micro_batches
                 mini_batch = data
+
+                if self.config.get('norm_adv', False):
+                    # normalize advantages
+                    responses = mini_batch['responses']
+                    response_length = responses.size(1)
+                    attention_mask = mini_batch['attention_mask']
+                    response_mask = attention_mask[:, -response_length:]
+                    advantages = mini_batch['advantages']
+                    advantages = verl_F.masked_whiten(advantages, response_mask)
+                    mini_batch['advantages'] = advantages
+            
                 if has_multi_modal_inputs:
                     self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     num_micro_batches = mini_batch.batch.batch_size[0] // self.config.ppo_micro_batch_size_per_gpu
@@ -370,8 +381,7 @@ class DataParallelPPOActor(BasePPOActor):
                                                                        cliprange=clip_ratio,
                                                                        cliprange_low=clip_ratio_low,
                                                                        cliprange_high=clip_ratio_high,
-                                                                       loss_agg_mode=loss_agg_mode,
-                                                                       norm_adv=self.config.get('norm_adv', False))
+                                                                       loss_agg_mode=loss_agg_mode)
                     # compute entropy loss from entropy
                     entropy_loss = verl_F.masked_mean(entropy, response_mask)
 

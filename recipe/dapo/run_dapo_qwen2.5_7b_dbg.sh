@@ -10,7 +10,7 @@ fi
 
 group_shuffle=$1
 partial_rollout=$2
-sort_batch=${SORT_BATCH:-True}
+sort_batch=${SORT_BATCH:-False}
 norm_adv=${NORM_ADV:-True}
 
 adv_estimator=gae
@@ -37,8 +37,8 @@ train_prompt_bsz=32
 n_groups=4
 n_resp_per_prompt=4
 train_prompt_mini_bsz=32
-train_micro_bsz_per_gpu=4
-infer_micro_bsz_per_gpu=8
+train_micro_bsz_per_gpu=64
+infer_micro_bsz_per_gpu=128
 
 project_name='DAPO-DBG'
 exp_name=DAPO-Qwen2.5-7B-GS-${group_shuffle}-DBG

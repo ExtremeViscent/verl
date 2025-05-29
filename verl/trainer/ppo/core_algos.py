@@ -305,8 +305,7 @@ def compute_policy_loss(old_log_prob,
                         cliprange=None,
                         cliprange_low=None,
                         cliprange_high=None,
-                        loss_agg_mode="token-mean",
-                        norm_adv=True):
+                        loss_agg_mode="token-mean"):
     """Adapted from https://github.com/huggingface/trl/blob/main/trl/trainer/ppo_trainer.py#L1122
     Args:
         old_log_prob: `(torch.Tensor)`
@@ -343,8 +342,8 @@ def compute_policy_loss(old_log_prob,
         cliprange_low = cliprange
     if cliprange_high is None:
         cliprange_high = cliprange
-    if norm_adv:
-        advantages = verl_F.masked_whiten(advantages, eos_mask)
+    # if norm_adv:
+    #     advantages = verl_F.masked_whiten(advantages, eos_mask)
     pg_losses2 = -advantages * torch.clamp(ratio, 1 - cliprange_low,
                                            1 + cliprange_high)  # - clip(ratio, 1-cliprange, 1+cliprange) * A
     pg_losses = torch.maximum(pg_losses1, pg_losses2)  # max(-ratio * A, -clip(ratio, 1-cliprange, 1+cliprange) * A)
