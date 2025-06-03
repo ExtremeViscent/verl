@@ -33,10 +33,10 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=128
+train_prompt_bsz=32
 n_groups=4
 n_resp_per_prompt=8
-train_prompt_mini_bsz=128
+train_prompt_mini_bsz=32
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
@@ -161,4 +161,4 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=disable
+    trainer.resume_mode=auto
