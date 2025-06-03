@@ -22,11 +22,11 @@ if __name__ == '__main__':
 
     data_source = 'orz'
 
-    dataset = datasets.load_dataset("/home/aiscuser",data_files=["orz_math_57k_collected.json"])['train']
+    dataset = datasets.load_dataset("Open-Reasoner-Zero/orz_math_72k_collection_extended")
 
-    dataset = dataset.train_test_split(test_size=0.1)
+    # dataset = dataset.train_test_split(test_size=0.1)
     train_dataset = dataset['train']
-    test_dataset = dataset['test']
+    # test_dataset = dataset['test']
 
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
@@ -39,7 +39,7 @@ if __name__ == '__main__':
 
             solution = example.pop('1').pop('ground_truth').pop('value')
             data = {
-                "data_source": data_source,
+                "data_source": 'math_dapo',
                 "prompt": [{
                     "role": "user",
                     "content": question,
@@ -60,13 +60,13 @@ if __name__ == '__main__':
         return process_fn
 
     train_dataset = train_dataset.map(function=make_map_fn('train'), with_indices=True)
-    test_dataset = test_dataset.map(function=make_map_fn('test'), with_indices=True)
+    # test_dataset = test_dataset.map(function=make_map_fn('test'), with_indices=True)
 
     local_dir = args.output_dir
     hdfs_dir = args.hdfs_dir
 
     train_dataset.to_parquet(os.path.join(local_dir, 'train.parquet'))
-    test_dataset.to_parquet(os.path.join(local_dir, 'test.parquet'))
+    # test_dataset.to_parquet(os.path.join(local_dir, 'test.parquet'))
 
     if hdfs_dir is not None:
         makedirs(hdfs_dir)
