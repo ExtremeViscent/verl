@@ -304,6 +304,7 @@ def compute_policy_loss(old_log_prob,
                         cliprange=None,
                         cliprange_low=None,
                         cliprange_high=None,
+                        clip_ratio_c=3.0,
                         loss_agg_mode="token-mean"):
     """Adapted from https://github.com/huggingface/trl/blob/main/trl/trainer/ppo_trainer.py#L1122
     Args:
@@ -331,6 +332,7 @@ def compute_policy_loss(old_log_prob,
         ppo_kl: (float)
             the estimated KL divergence between the latest updating policy and the old sampling policy
     """
+    response_mask = eos_mask
     negative_approx_kl = log_prob - old_log_prob
     ratio = torch.exp(negative_approx_kl)
     ppo_kl = verl_F.masked_mean(-negative_approx_kl, response_mask)

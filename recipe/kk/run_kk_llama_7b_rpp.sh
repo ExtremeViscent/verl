@@ -161,4 +161,4 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=auto
+    trainer.resume_mode=disable
