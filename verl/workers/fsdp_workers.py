@@ -46,6 +46,7 @@ from datetime import timedelta
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv('VERL_PPO_LOGGING_LEVEL', 'WARN'))
 
+from tensordict import TensorDict
 
 def create_device_mesh(world_size, fsdp_size):
     if fsdp_size < 0 or fsdp_size >= world_size:
@@ -455,6 +456,7 @@ class ActorRolloutRefWorker(Worker):
 
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data=data)
+            print(f'Input shape:{data.batch["input_ids"].shape}')
             # perform training
             with Timer(name='update_policy', logger=None) as timer:
                 metrics = self.actor.update_policy(data=data)
@@ -474,7 +476,15 @@ class ActorRolloutRefWorker(Worker):
             log_gpu_memory_usage('After update policy', logger=logger)
 
             # TODO: here, we should return all metrics
-            output = DataProto(meta_info={'metrics': metrics})
+            losses = {
+                'l1': metrics.pop('pg_losses_1'),
+                'l2': metrics.pop('pg_losses_2'),
+                'adv_batches': metrics.pop('adv_batches', None),
+            }
+            losses = TensorDict(losses, batch_size=losses['adv_batches'].shape[0])
+            print(f'adv_batches: {losses["adv_batches"].shape}, l1: {losses["l1"].shape}, l2: {losses["l2"].shape}')
+
+            output = DataProto(meta_info={'metrics': metrics}, batch = losses)
 
             output = self.ulysses_sharding_manager.postprocess_data(data=output)
             output = output.to('cpu')

@@ -1224,6 +1224,7 @@ class RayPPOTrainer(object):
                                                     gamma=self.config.algorithm.gamma,
                                                     lam=self.config.algorithm.lam,
                                                     num_repeat=n)
+                            artifacts['advantages'] = batch.batch['advantages']
 
                         # update critic
                         if self.use_critic:
@@ -1237,6 +1238,10 @@ class RayPPOTrainer(object):
                             # update actor
                             with _timer('update_actor', timing_raw):
                                 actor_output = self.actor_rollout_wg.update_actor(batch)
+                            actor_losses = actor_output.batch
+                            artifacts['l1'] = actor_losses['l1']
+                            artifacts['l2'] = actor_losses['l2']
+                            artifacts['adv_batches'] = actor_losses['adv_batches']
                             actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
                             metrics.update(actor_output_metrics)
 

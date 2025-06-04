@@ -356,7 +356,7 @@ def compute_policy_loss(old_log_prob,
     pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
     pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
     
-    return pg_loss, pg_clipfrac, ppo_kl
+    return pg_loss, pg_clipfrac, ppo_kl, pg_losses1, pg_losses2
 
 
 def compute_entropy_loss(logits, eos_mask):

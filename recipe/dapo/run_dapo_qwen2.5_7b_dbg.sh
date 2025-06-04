@@ -32,9 +32,9 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=32
+train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=4
+n_resp_per_prompt=8
 train_prompt_mini_bsz=32
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
@@ -52,8 +52,8 @@ NNODES=${NNODES:-1}
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-3B"}
 CKPTS_DIR=${CKPTS_DIR:-"/tmp/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
-TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/kk/train.parquet"}
+TEST_FILE=${TEST_FILE:-"${HOME}/data/kk/test.parquet"}
 
 mkdir -p "${CKPTS_DIR}"
 
@@ -101,7 +101,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.rollout.n_groups=${n_groups} \
     +actor_rollout_ref.rollout.partial_rollout=${partial_rollout} \
     +actor_rollout_ref.rollout.preserve_group=True \
-    +actor_rollout_ref.rollout.oversubscribe=True \
+    +actor_rollout_ref.rollout.oversubscribe=False \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attention_dropout=0. \

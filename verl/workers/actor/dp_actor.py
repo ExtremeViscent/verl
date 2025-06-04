@@ -258,7 +258,12 @@ class DataParallelPPOActor(BasePPOActor):
         else:
             dataloader = batch.split(self.config.ppo_mini_batch_size)
 
+        print(f'num_mini_batches: {len(dataloader)}')
+
         metrics = {}
+        losses_1 = []
+        losses_2 = []
+        adv_batches = []
         for epoch in range(self.config.ppo_epochs):
             for batch_idx, data in enumerate(dataloader):
                 # split batch into micro_batches
@@ -277,6 +282,9 @@ class DataParallelPPOActor(BasePPOActor):
 
                 self.actor_optimizer.zero_grad()
 
+                mini_losses_1 = []
+                mini_losses_2 = []
+                mini_adv = []
                 for data in micro_batches:
                     # Support all hardwares
                     if isinstance(data, DataProto):
@@ -299,7 +307,7 @@ class DataParallelPPOActor(BasePPOActor):
                     # all return: (bsz, response_length)
                     entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature)
 
-                    pg_loss, pg_clipfrac, ppo_kl = core_algos.compute_policy_loss(old_log_prob=old_log_prob,
+                    pg_loss, pg_clipfrac, ppo_kl, l1, l2 = core_algos.compute_policy_loss(old_log_prob=old_log_prob,
                                                                        log_prob=log_prob,
                                                                        advantages=advantages,
                                                                        eos_mask=response_mask,
@@ -339,9 +347,20 @@ class DataParallelPPOActor(BasePPOActor):
                         'actor/ppo_kl': ppo_kl.detach().item(),
                     }
                     append_to_dict(metrics, data)
-
+                    mini_losses_1.append(l1.detach())
+                    mini_losses_2.append(l2.detach())
+                    mini_adv.append(advantages.detach())
+                losses_1.append(torch.cat(mini_losses_1, dim=0))
+                losses_2.append(torch.cat(mini_losses_2, dim=0))
+                adv_batches.append(torch.cat(mini_adv, dim=0))
                 grad_norm = self._optimizer_step()
                 data = {'actor/grad_norm': grad_norm.detach().item()}
             append_to_dict(metrics, data)
+        losses_1 = torch.stack(losses_1)
+        losses_2 = torch.stack(losses_2)
+        adv_batches = torch.stack(adv_batches)
+        metrics['pg_losses_1'] = losses_1.detach()
+        metrics['pg_losses_2'] = losses_2.detach()
+        metrics['adv_batches'] = adv_batches.detach()
         self.actor_optimizer.zero_grad()
         return metrics
