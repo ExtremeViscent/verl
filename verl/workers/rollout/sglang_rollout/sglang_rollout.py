@@ -152,6 +152,8 @@ class SGLangRollout(BaseRollout):
                                             device_mesh_cpu.get_group("tp"))
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(visible_devices)
 
+        print(f"Max total tokens: {config.get('max_total_tokens', None)}")
+
         self.inference_engine = VerlEngine(
             model_path=actor_module,
             dtype=config.dtype,
@@ -171,6 +173,7 @@ class SGLangRollout(BaseRollout):
             enable_mixed_chunk=True,
             stream_interval=256,
             enable_torch_compile=False,
+            max_total_tokens=config.get("max_total_tokens", None),
         )
 
         # offload

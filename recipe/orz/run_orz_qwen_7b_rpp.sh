@@ -12,7 +12,6 @@ group_shuffle=$1
 partial_rollout=$2
 preserve_group=${PRESERVE_GROUP:-True}
 oversubscribe=${OVERSUB:-False}
-VERL_PATH=$(pwd)
 
 adv_estimator=reinforce_plus_plus
 
@@ -24,12 +23,15 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 16))
+max_response_length=$((1024 * 8))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
 
 loss_agg_mode="token-mean"
+
+# Set current path as verl root path
+VERL_PATH=$(pwd)
 
 enable_filter_groups=False
 filter_groups_metric=acc
@@ -41,15 +43,15 @@ train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='LogicRL-RPP-posr'
-exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}
+project_name='ORZ-RPP'
+exp_name=Qwen2.5-7B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
     if [ "${partial_rollout}" = "True" ]; then
         exp_name="${exp_name}-PR"
-    fi
-    if [ "${preserve_group}" = "True" ]; then
-        exp_name="${exp_name}-PG"
+        if [ "${preserve_group}" = "True" ]; then
+            exp_name="${exp_name}-PG"
+        fi
     fi
 fi
 
@@ -58,34 +60,36 @@ if [ "${oversubscribe}" = "True" ]; then
 fi
 
 # Ray
-# RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:6379"}
-WORKING_DIR=${WORKING_DIR:-"${PWD}"}
-RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
+# RAY_ADDRESS=${RAY_ADDRESS:-"http://node048:8266"}
+# WORKING_DIR=${WORKING_DIR:-"${PWD}"}
+# RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 # Paths
-RAY_DATA_HOME=${RAY_DATA_HOME:-"/gpfs/users/zhangyiqi/srl/verl"}
-MODEL_PATH=${MODEL_PATH:-"/gpfs/models/huggingface.co/Meta-Llama/Meta-Llama-3___1-8B-Instruct"}
+RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
+MODEL_PATH=${MODEL_PATH:-"/gpfs/models/huggingface.co/Qwen/Qwen2.5-7B-Instruct"}
 CKPTS_DIR=${CKPTS_DIR:-"/gpfs/users/zhangyiqi/srl/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-["/gpfs/users/zhangyiqi/srl/data/kk/3ppl/train.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/4ppl/train.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/5ppl/train.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/6ppl/train.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/7ppl/train.parquet"]}
-TEST_FILE=${TEST_FILE:-["/gpfs/users/zhangyiqi/srl/data/kk/3ppl/test.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/4ppl/test.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/5ppl/test.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/6ppl/test.parquet", "/gpfs/users/zhangyiqi/srl/data/kk/7ppl/test.parquet"]}
-# TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-["/gpfs/users/zhangyiqi/srl/data/orz/train.parquet"]}
+TEST_FILE=${TEST_FILE:-["${VERL_PATH}/../data/aime-2024.parquet", "${VERL_PATH}/../data/math500_eval.parquet"]}
 
 mkdir -p "${CKPTS_DIR}"
 
 # Algorithm
-temperature=0.7
+temperature=1.0
 top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Performance Related Parameter
-sp_size=8
+sp_size=4
 use_dynamic_bsz=True
 actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
 infer_ppo_max_token_len=$((max_prompt_length + max_response_length))
 offload=True
-gen_tp=8
+gen_tp=4
 
 
+# ray job submit \
+#     --address=${RAY_ADDRESS} \
+#     -- 
 nohup python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
@@ -100,8 +104,6 @@ nohup python3 -m verl.trainer.main_ppo \
     algorithm.kl_ctrl.kl_coef=${kl_coef} \
     actor_rollout_ref.actor.use_kl_loss=${use_kl_loss} \
     actor_rollout_ref.actor.kl_loss_coef=${kl_loss_coef} \
-    actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
-    actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     +algorithm.filter_groups.enable=${enable_filter_groups} \
     +algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
     +algorithm.filter_groups.metric=${filter_groups_metric} \
@@ -125,6 +127,8 @@ nohup python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.model.override_config.embd_pdrop=0. \
     +actor_rollout_ref.model.override_config.resid_pdrop=0. \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
+    actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=10 \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
@@ -136,8 +140,8 @@ nohup python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${sp_size} \
-    +actor_rollout_ref.rollout.max_total_tokens=409600 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.30 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
+    +actor_rollout_ref.rollout.max_total_tokens=983040 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \
@@ -158,11 +162,11 @@ nohup python3 -m verl.trainer.main_ppo \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.val_before_train=True \
-    trainer.test_freq=20 \
-    trainer.save_freq=100 \
+    trainer.test_freq=10 \
+    trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=auto 2>&1 | tee "${CKPTS_DIR}/train.log"
+    trainer.resume_mode=disable > ${CKPTS_DIR}/log.txt 2>&1 &

@@ -23,20 +23,23 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 8))
+max_response_length=$((1024 * 16))
 enable_overlong_buffer=False
 overlong_buffer_len=$((1024 * 4))
 overlong_penalty_factor=1.0
 
 loss_agg_mode="token-mean"
 
+# Set current path as verl root path
+VERL_PATH=$(pwd)
+
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=10
-train_prompt_bsz=32
+train_prompt_bsz=128
 n_groups=4
 n_resp_per_prompt=8
-train_prompt_mini_bsz=32
+train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
@@ -57,17 +60,16 @@ if [ "${oversubscribe}" = "True" ]; then
 fi
 
 # Ray
-RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
-WORKING_DIR=${WORKING_DIR:-"${PWD}"}
-RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
+# RAY_ADDRESS=${RAY_ADDRESS:-"http://node048:8266"}
+# WORKING_DIR=${WORKING_DIR:-"${PWD}"}
+# RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.1-8B-Instruct"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/orz/train.parquet"}
-TEST_FILE=${TEST_FILE:-"${HOME}/data/math500_eval.parquet"}
-# TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+MODEL_PATH=${MODEL_PATH:-"/gpfs/models/huggingface.co/Meta-Llama/Meta-Llama-3___1-8B-Instruct"}
+CKPTS_DIR=${CKPTS_DIR:-"/gpfs/users/zhangyiqi/srl/ckpts/${project_name}/${exp_name}"}
+TRAIN_FILE=${TRAIN_FILE:-["/gpfs/users/zhangyiqi/srl/data/orz/train.parquet"]}
+TEST_FILE=${TEST_FILE:-["${VERL_PATH}/../data/aime-2024.parquet", "${VERL_PATH}/../data/math500_eval.parquet"]}
 
 mkdir -p "${CKPTS_DIR}"
 
@@ -77,7 +79,7 @@ top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Performance Related Parameter
-sp_size=1
+sp_size=8
 use_dynamic_bsz=True
 actor_ppo_max_token_len=$((max_prompt_length + max_response_length))
 infer_ppo_max_token_len=$((max_prompt_length + max_response_length))
@@ -85,7 +87,10 @@ offload=True
 gen_tp=4
 
 
-python3 -m verl.trainer.main_ppo \
+# ray job submit \
+#     --address=${RAY_ADDRESS} \
+#     -- 
+nohup python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TEST_FILE" \
@@ -122,6 +127,8 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.model.override_config.embd_pdrop=0. \
     +actor_rollout_ref.model.override_config.resid_pdrop=0. \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
+    actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=10 \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
@@ -133,7 +140,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${sp_size} \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.20 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
+    +actor_rollout_ref.rollout.max_total_tokens=737280 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \
@@ -154,11 +162,11 @@ python3 -m verl.trainer.main_ppo \
     trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.val_before_train=True \
     trainer.test_freq=10 \
     trainer.save_freq=20 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=disable
+    trainer.resume_mode=disable > ${CKPTS_DIR}/log.txt 2>&1 &

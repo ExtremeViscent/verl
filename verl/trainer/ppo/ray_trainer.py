@@ -546,7 +546,7 @@ class RayPPOTrainer(object):
             test_batch = DataProto.from_single_dict(test_data)
             data_source = test_batch.non_tensor_batch.get('data_source', ['unknown'] * test_batch.batch['input_ids'].shape[0])
             for ds in data_source:
-                if ds == 'math_dapo' or ds.startswith('aime'):
+                if ds == 'math_dapo' or ds == 'aime' or ds == 'math_500':
                     use_legacy_validation = False
                     break
 
@@ -938,6 +938,8 @@ class RayPPOTrainer(object):
 
         log_file = f"/mnt/output/logs/{self.config.trainer.project_name}/{self.config.trainer.experiment_name}/{self.config.trainer.experiment_name}.log"
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        os.environ['http_proxy'] = 'http://10.1.2.1:7890'
+        os.environ['https_proxy'] = 'http://10.1.2.1:7890'
         logger = Tracking(project_name=self.config.trainer.project_name,
                           experiment_name=self.config.trainer.experiment_name,
                           default_backend=self.config.trainer.logger,
@@ -1137,6 +1139,13 @@ class RayPPOTrainer(object):
                                     filtered_batch.extend(finished_batch[oid])
                                 if len(filtered_batch) >= self.config.data.train_batch_size * n:
                                     break
+                            if len(filtered_batch) % self.actor_rollout_wg.world_size != 0:
+                                pad_size = self.actor_rollout_wg.world_size - len(filtered_batch) % self.actor_rollout_wg.world_size
+                                for i in range(pad_size):
+                                    filtered_batch.append(filtered_batch[0])
+                            else:
+                                pad_size = 0
+                            print(f'{pad_size=}')
                             filtered_batch = batch_collate_fn(filtered_batch)
                             print(f'{len(filtered_batch)=}')
                         else:

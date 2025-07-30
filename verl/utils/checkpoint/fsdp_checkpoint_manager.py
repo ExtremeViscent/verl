@@ -120,6 +120,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
     def save_checkpoint(self, local_path: str, hdfs_path: str = None, global_step: int = 0, max_ckpt_to_keep=None):
         if local_path is None:
             return
+        
+        temp_dir = tempfile.mkdtemp(prefix=f"checkpoint_temp_{self.rank}_")
 
         # Wait for any previous rsync operations to complete
         while self.futures:
@@ -127,6 +129,14 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             if process.poll() is None:  # If process is still running
                 print(f'[rank-{self.rank}]: Waiting for previous checkpoint rsync to complete')
                 process.wait()  # Wait for it to finish
+                # Delete temporary directory if it exists
+                if os.path.exists(temp_dir):
+                    print(f'[rank-{self.rank}]: Deleting temporary directory {temp_dir}')
+                    try:
+                        os.rmdir(temp_dir)
+                    except OSError as e:
+                        print(f'[rank-{self.rank}]: Failed to delete temporary directory {temp_dir}: {e}')
+
 
         # record the previous global step
         self.previous_global_step = global_step
@@ -166,9 +176,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                     'lr_scheduler': lr_scheduler_state_dict,
                     'rng': self.get_rng_state(),
                 }
-                model_path = os.path.join(temp_dir, f'model_world_size_{self.world_size}_rank_{self.rank}.pt')
-                optim_path = os.path.join(temp_dir, f'optim_world_size_{self.world_size}_rank_{self.rank}.pt')
-                extra_path = os.path.join(temp_dir, f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt')
+                model_path = os.path.join(local_path, f'model_world_size_{self.world_size}_rank_{self.rank}.pt')
+                optim_path = os.path.join(local_path, f'optim_world_size_{self.world_size}_rank_{self.rank}.pt')
+                extra_path = os.path.join(local_path, f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt')
 
                 print(f'[rank-{self.rank}]: Saving model to {os.path.abspath(model_path)}')
                 print(f'[rank-{self.rank}]: Saving checkpoint to {os.path.abspath(model_path)}')
@@ -189,43 +199,45 @@ class FSDPCheckpointManager(BaseCheckpointManager):
 
         dist.barrier()
         
-        # Make sure the target directory exists
-        os.makedirs(local_path, exist_ok=True)
+        # # Make sure the target directory exists
+        # os.makedirs(local_path, exist_ok=True)
         
-        # Only copy files relevant to this rank
-        print(f'[rank-{self.rank}]: Starting rsync for rank-specific files to {local_path}')
+        # # Only copy files relevant to this rank
+        # print(f'[rank-{self.rank}]: Starting rsync for rank-specific files to {local_path}')
         
-        # Copy model file for this rank
-        model_file = f'model_world_size_{self.world_size}_rank_{self.rank}.pt'
-        model_src = os.path.join(temp_dir, model_file)
-        model_dst = os.path.join(local_path, model_file)
-        rsync_model_cmd = ["rsync", "-a", model_src, model_dst]
-        process = subprocess.Popen(rsync_model_cmd)
-        self.futures.append(process)
+        # # Copy model file for this rank
+        # model_file = f'model_world_size_{self.world_size}_rank_{self.rank}.pt'
+        # model_src = os.path.join(temp_dir, model_file)
+        # model_dst = os.path.join(local_path, model_file)
+        # rsync_model_cmd = ["rsync", "-a", model_src, model_dst]
+        # process = subprocess.Popen(rsync_model_cmd)
+        # self.futures.append(process)
         
-        # Copy optimizer file for this rank
-        optim_file = f'optim_world_size_{self.world_size}_rank_{self.rank}.pt'
-        optim_src = os.path.join(temp_dir, optim_file)
-        optim_dst = os.path.join(local_path, optim_file)
-        rsync_optim_cmd = ["rsync", "-a", optim_src, optim_dst]
-        process = subprocess.Popen(rsync_optim_cmd)
-        self.futures.append(process)
+        # # Copy optimizer file for this rank
+        # optim_file = f'optim_world_size_{self.world_size}_rank_{self.rank}.pt'
+        # optim_src = os.path.join(temp_dir, optim_file)
+        # optim_dst = os.path.join(local_path, optim_file)
+        # rsync_optim_cmd = ["rsync", "-a", optim_src, optim_dst]
+        # process = subprocess.Popen(rsync_optim_cmd)
+        # self.futures.append(process)
         
-        # Copy extra state file for this rank
-        extra_file = f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt'
-        extra_src = os.path.join(temp_dir, extra_file)
-        extra_dst = os.path.join(local_path, extra_file)
-        rsync_extra_cmd = ["rsync", "-a", extra_src, extra_dst]
-        process = subprocess.Popen(rsync_extra_cmd)
-        self.futures.append(process)
+        # # Copy extra state file for this rank
+        # extra_file = f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt'
+        # extra_src = os.path.join(temp_dir, extra_file)
+        # extra_dst = os.path.join(local_path, extra_file)
+        # rsync_extra_cmd = ["rsync", "-a", extra_src, extra_dst]
+        # process = subprocess.Popen(rsync_extra_cmd)
+        # self.futures.append(process)
         
-        # Only rank 0 copies the huggingface directory if needed
-        if self.rank == 0 and "hf_model" in self.checkpoint_contents:
-            hf_src = os.path.join(temp_dir, "huggingface")
-            hf_dst = os.path.join(local_path, "huggingface")
-            if os.path.exists(hf_src):
-                rsync_hf_cmd = ["rsync", "-a", f"{hf_src}/", f"{hf_dst}/"]
-                process = subprocess.Popen(rsync_hf_cmd)
-                self.futures.append(process)
+        # # Only rank 0 copies the huggingface directory if needed
+        # if self.rank == 0 and "hf_model" in self.checkpoint_contents:
+        #     hf_src = os.path.join(temp_dir, "huggingface")
+        #     hf_dst = os.path.join(local_path, "huggingface")
+        #     if os.path.exists(hf_src):
+        #         rsync_hf_cmd = ["rsync", "-a", f"{hf_src}/", f"{hf_dst}/"]
+        #         process = subprocess.Popen(rsync_hf_cmd)
+        #         self.futures.append(process)
+
+
 
         self.previous_saved_paths.append(local_path)

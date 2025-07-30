@@ -22,11 +22,7 @@ if __name__ == '__main__':
 
     data_source = 'orz'
 
-    dataset = datasets.load_dataset("Open-Reasoner-Zero/orz_math_72k_collection_extended")
-
-    # dataset = dataset.train_test_split(test_size=0.1)
-    train_dataset = dataset['train']
-    # test_dataset = dataset['test']
+    dataset = datasets.load_dataset("Open-Reasoner-Zero/orz_math_72k_collection_extended")['train']
 
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
@@ -59,7 +55,7 @@ if __name__ == '__main__':
 
         return process_fn
 
-    train_dataset = train_dataset.map(function=make_map_fn('train'), with_indices=True)
+    train_dataset = dataset.map(function=make_map_fn('train'), with_indices=True)
     # test_dataset = test_dataset.map(function=make_map_fn('test'), with_indices=True)
 
     local_dir = args.output_dir

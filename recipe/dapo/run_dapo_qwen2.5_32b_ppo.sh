@@ -9,14 +9,15 @@ if [ $# -ne 2 ]; then
 fi
 
 # No-op if hostname is not node-0
-if [ "$(hostname)" != "node-0" ]; then
-    echo "This script should only be run on node-0."
-    exit 0
-fi
+# if [ "$(hostname)" != "node-0" ]; then
+#     echo "This script should only be run on node-0."
+#     exit 0
+# fi
 
 
 group_shuffle=$1
 partial_rollout=$2
+VERL_PATH=$(pwd)
 
 adv_estimator=gae
 
@@ -40,8 +41,8 @@ filter_groups_metric=acc
 max_num_gen_batches=10
 train_prompt_bsz=128
 n_groups=4
-n_resp_per_prompt=4
-train_prompt_mini_bsz=512
+n_resp_per_prompt=1
+train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
@@ -55,16 +56,17 @@ if [ "${group_shuffle}" = "True" ]; then
 fi
 
 # Ray
-RAY_ADDRESS=${RAY_ADDRESS:-"http://node-0:8265"}
+# RAY_ADDRESS=${RAY_ADDRESS:-"http://node-0:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
-NNODES=${NNODES:-1}
+NNODES=${NNODES:-4}
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"qwen/Qwen2.5-32B"}
-CKPTS_DIR=${CKPTS_DIR:-"/mnt/blob/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${HOME}/data/dapo-math-17k.parquet"}
-TEST_FILE=${TEST_FILE:-"${HOME}/data/aime-2024.parquet"}
+MODEL_PATH=${MODEL_PATH:-"/gpfs/models/huggingface.co/Qwen/Qwen2.5-32B"}
+CKPTS_DIR=${CKPTS_DIR:-"/gpfs/users/zhangyiqi/srl/ckpts/${project_name}/${exp_name}"}
+TRAIN_FILE=${TRAIN_FILE:-["/gpfs/users/zhangyiqi/srl/data/orz/train.parquet"]}
+TEST_FILE=${TEST_FILE:-["${VERL_PATH}/../data/aime-2024.parquet", "${VERL_PATH}/../data/math500_eval.parquet"]}
+
 
 mkdir -p "${CKPTS_DIR}"
 
@@ -81,10 +83,10 @@ infer_ppo_max_token_len=$((max_prompt_length + max_response_length))
 offload=True
 gen_tp=8
 
+export http_proxy=http://10.1.2.1:7890
+export https_proxy=http://10.1.2.1:7890
 
-ray job submit --runtime-env="${RUNTIME_ENV}" \
-    --working-dir "${WORKING_DIR}" \
-    -- python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path=./config --config-name='ppo_trainer' \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TEST_FILE" \
@@ -103,6 +105,8 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     +algorithm.filter_groups.metric=${filter_groups_metric} \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
+    actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
+    actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=${infer_micro_bsz_per_gpu} \
@@ -131,6 +135,7 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${sp_size} \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.20 \
+    +actor_rollout_ref.rollout.max_total_tokens=819200 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \
@@ -168,7 +173,7 @@ ray job submit --runtime-env="${RUNTIME_ENV}" \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=True \
     trainer.test_freq=10 \
-    trainer.save_freq=10 \
+    trainer.save_freq=80 \
     trainer.total_epochs=100 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=auto
+    trainer.resume_mode=auto 2>&1 | tee -a "${CKPTS_DIR}/train.log"

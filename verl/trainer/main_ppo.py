@@ -118,7 +118,7 @@ def run_ppo(config) -> None:
     ray.get(runner.run.remote(config))
 
 
-@ray.remote(num_cpus=1)  # please make sure main_task is not scheduled on head
+@ray.remote(num_cpus=1, max_restarts=10, max_task_retries=-1)
 class TaskRunner:
 
     def run(self, config):

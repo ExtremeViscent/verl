@@ -167,7 +167,7 @@ def compute_score(solution_str: str,
 
     # Validate response structure
     format_correct = validate_response_structure(processed_str)
-    format_score = format_reward if format_correct else -abs(format_reward)
+    format_score = format_reward if format_correct else 0
     # print(f"\n  Format validation: {'PASS' if format_correct else 'FAIL'}")
     # print(f"  Format score: {format_score}")
 
@@ -181,16 +181,16 @@ def compute_score(solution_str: str,
             # print(f"  Predicted: {pred_status}")
             
             if pred_status == gt_status:
-                answer_score = 2
+                answer_score = 0.5
                 # print("  Content validation: FULL MATCH")
             else:
-                answer_score = -1.5
+                answer_score = 0.25
                 # print("  Content validation: MISMATCH")
         else:
-            answer_score = -2
+            answer_score = 0
             # print( "Fail to parse answer")
     else:
-        answer_score = -2
+        answer_score = 0
         # print("\n[Content Validation] Skipped due to format errors or missing answer")
 
     total_score = format_score + answer_score

@@ -84,25 +84,26 @@ class FSDPSGLangShardingManager(BaseShardingManager):
     def sync_params(self):
         torch.cuda.empty_cache()
         self.inference_engine.resume_memory_occupation()
-        log_gpu_memory_usage('Before state_dict() in sharding manager memory', logger=logger)
+        log_gpu_memory_usage('Before state_dict() in sharding manager memory')
         params = self.module.state_dict()
         # self.module.cpu()
         torch.cuda.empty_cache()
-        log_gpu_memory_usage('After state_dict() in sharding manager memory', logger=logger)
+        log_gpu_memory_usage('After state_dict() in sharding manager memory')
         # Copy, not share memory
         load_format = None if self.full_params else 'dtensor'
 
         self.inference_engine.update_weights_from_tensor([(k, v) for k, v in params.items()], load_format=None)
-        log_gpu_memory_usage('After sync model weights in sharding manager', logger=logger)
+        log_gpu_memory_usage('After sync model weights in sharding manager')
 
         del params
         self.inference_engine.release_memory_occupation()
 
     def __enter__(self):
 
+        log_gpu_memory_usage('Before resuming SGLang occupation (Driver)')
         torch.cuda.empty_cache()
         self.inference_engine.resume_memory_occupation()
-        log_gpu_memory_usage('After del state_dict and empty_cache in sharding manager', logger=logger)
+        log_gpu_memory_usage('After resuming SGLang occupation (Driver)')
 
         # important: need to manually set the random states of each tp to be identical.
         if self.device_mesh is not None:

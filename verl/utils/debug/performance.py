@@ -15,14 +15,22 @@
 import torch
 import torch.distributed as dist
 import logging
+import pynvml
 
+handle = None
 
 def log_gpu_memory_usage(head: str, logger: logging.Logger = None, level=logging.DEBUG, rank: int = 0):
     if (not dist.is_initialized()) or (rank is None) or (dist.get_rank() == rank):
+        global handle
+        if handle is None:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
+
         memory_allocated = torch.cuda.memory_allocated() / 1024**3
         memory_reserved = torch.cuda.memory_reserved() / 1024**3
+        memory_available = pynvml.nvmlDeviceGetMemoryInfo(handle).free / 1024**3
 
-        message = f'{head}, memory allocated (GB): {memory_allocated}, memory reserved (GB): {memory_reserved}'
+        message = f'{head}, memory allocated (GB): {memory_allocated}, memory reserved (GB): {memory_reserved}, memory available (GB): {memory_available}'
 
         if logger is None:
             print(message)
