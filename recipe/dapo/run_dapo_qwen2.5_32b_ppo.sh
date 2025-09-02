@@ -65,7 +65,7 @@ RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"/gpfs/models/huggingface.co/Qwen/Qwen2.5-32B"}
 CKPTS_DIR=${CKPTS_DIR:-"/gpfs/users/zhangyiqi/srl/ckpts/${project_name}/${exp_name}"}
 TRAIN_FILE=${TRAIN_FILE:-["/gpfs/users/zhangyiqi/srl/data/orz/train.parquet"]}
-TEST_FILE=${TEST_FILE:-["${VERL_PATH}/../data/aime-2024.parquet", "${VERL_PATH}/../data/math500_eval.parquet"]}
+TEST_FILE=${TEST_FILE:-["${VERL_PATH}/../data/aime-2024.parquet"]}
 
 
 mkdir -p "${CKPTS_DIR}"

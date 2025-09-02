@@ -78,6 +78,14 @@ class AdvantageEstimator(str, Enum):
     REMAX = 'remax'
     RLOO = 'rloo'
 
+def sort_by_length(data: DataProto):
+    """Sort the data by length of the response"""
+    attention_mask = data.batch['attention_mask']
+    response_lengths = attention_mask.sum(dim=-1)
+    sorted_indices = torch.argsort(response_lengths, descending=True)
+    data.reorder(sorted_indices)
+    return data
+
 
 @dataclass
 class ResourcePoolManager:
@@ -1227,12 +1235,26 @@ class RayPPOTrainer(object):
                             else:
                                 batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
 
-                            # compute advantages, executed on the driver process
-                            batch = compute_advantage(batch,
-                                                    adv_estimator=self.config.algorithm.adv_estimator,
-                                                    gamma=self.config.algorithm.gamma,
-                                                    lam=self.config.algorithm.lam,
-                                                    num_repeat=n)
+                            if self.config.trainer.get('sort', False):
+                                batch = sort_by_length(batch)
+                                n_sub_batch = self.config.data.train_batch_size // self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+                                filtered_batch = []
+                                sub_batches = batch.chunk(chunks=n_sub_batch)
+                                for sub_batch in sub_batches:
+                                    sub_batch = compute_advantage(sub_batch,
+                                                                    adv_estimator=self.config.algorithm.adv_estimator,
+                                                                    gamma=self.config.algorithm.gamma,
+                                                                    lam=self.config.algorithm.lam,
+                                                                    num_repeat=n)
+                                    filtered_batch.append(sub_batch)
+                                batch = DataProto.concat(filtered_batch)
+                            else:
+                                # compute advantages, executed on the driver process
+                                batch = compute_advantage(batch,
+                                                        adv_estimator=self.config.algorithm.adv_estimator,
+                                                        gamma=self.config.algorithm.gamma,
+                                                        lam=self.config.algorithm.lam,
+                                                        num_repeat=n)
 
                         # update critic
                         if self.use_critic:

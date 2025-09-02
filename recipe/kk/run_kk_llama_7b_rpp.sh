@@ -10,7 +10,8 @@ fi
 
 group_shuffle=$1
 partial_rollout=$2
-preserve_group=${PRESERVE_GROUP:-True}
+sort=${SORT:-False}
+preserve_group=${PRESERVE_GROUP:-False}
 oversubscribe=${OVERSUB:-False}
 VERL_PATH=$(pwd)
 
@@ -41,8 +42,8 @@ train_prompt_mini_bsz=128
 train_micro_bsz_per_gpu=4
 infer_micro_bsz_per_gpu=8
 
-project_name='LogicRL-RPP-posr'
-exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}
+project_name='LogicRL-RPP-R'
+exp_name=LLaMA3.1-8B-${train_prompt_bsz}-${n_resp_per_prompt}-${train_prompt_mini_bsz}-s
 if [ "${group_shuffle}" = "True" ]; then
     exp_name="${exp_name}-GS"
     if [ "${partial_rollout}" = "True" ]; then
@@ -160,9 +161,10 @@ nohup python3 -m verl.trainer.main_ppo \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.test_freq=20 \
     trainer.save_freq=100 \
     trainer.total_epochs=100 \
+    +trainer.sort=${sort} \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=auto 2>&1 | tee "${CKPTS_DIR}/train.log"
